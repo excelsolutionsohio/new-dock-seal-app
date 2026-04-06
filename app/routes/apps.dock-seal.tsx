@@ -1016,6 +1016,11 @@ export async function action({ request }: ActionFunctionArgs) {
       ? "Dock Seal with Head Pad"
       : "Dock Seal with Head Cap";
 
+  const selectedVariantId =
+    calc.series === "1000"
+      ? "gid://shopify/ProductVariant/47584195608834"
+      : "gid://shopify/ProductVariant/47584198787330";
+
   const noteLines = [
     "Dock seal generated from configurator",
     `Control Number: ${controlNumber}`,
@@ -1040,30 +1045,54 @@ export async function action({ request }: ActionFunctionArgs) {
     `Options: ${calc.notes.join(", ")}`,
   ].filter(Boolean);
 
-  const cleanDescription = `(A ${payload.a})(B ${payload.b})(C ${payload.c})(D ${payload.d})(E ${payload.e})(F ${payload.f})(G ${payload.g})(H ${payload.h})(I ${payload.i})(J ${payload.j})(K ${payload.k})(L ${payload.l})(M ${payload.m})(N ${payload.n})(O ${payload.o})(P ${payload.p})(Q ${payload.q})(R ${calc.footerMaterialDisplay})(S ${calc.wallTypeDisplay}) | Control # ${controlNumber}`;
-
   const variables = {
     input: {
-      note: `Qty: ${quantity} | Unit: ${dollars(calc.totalEstimatedPrice)} | Freight: ${dollars(shipping.amount)} | ZIP: ${shipping.zip} | Subtotal: ${dollars(grandTotal)}`,
+      note: noteLines.join("
+"),
       tags: ["dock-seal-config"],
       lineItems: [
         {
-          title,
-          quantity: 1,
-          originalUnitPriceWithCurrency: {
-            amount: grandTotal,
+          variantId: selectedVariantId,
+          quantity: quantity,
+          priceOverride: {
+            amount: String(calc.totalEstimatedPrice),
             currencyCode: "USD",
           },
-          taxable: true,
           customAttributes: [
-            { key: "Config", value: cleanDescription },
-            { key: "Quantity", value: String(quantity) },
-            { key: "Unit Price", value: dollars(calc.totalEstimatedPrice) },
-            { key: "Freight", value: dollars(shipping.amount) },
-            { key: "ZIP", value: shipping.zip },
-            { key: "Subtotal", value: dollars(grandTotal) },
+            { key: "A", value: payload.a },
+            { key: "B", value: payload.b },
+            { key: "C", value: payload.c },
+            { key: "D", value: payload.d },
+            { key: "E", value: payload.e },
+            { key: "F", value: payload.f },
+            { key: "G", value: payload.g },
+            { key: "H", value: payload.h },
+            { key: "I", value: payload.i },
+            { key: "J", value: payload.j },
+            { key: "K", value: payload.k },
+            { key: "L", value: payload.l },
+            { key: "M", value: payload.m },
+            { key: "N", value: payload.n },
+            { key: "O", value: payload.o },
+            { key: "P", value: payload.p },
+            { key: "Q", value: payload.q },
+            { key: "R", value: calc.footerMaterialDisplay },
+            { key: "S", value: calc.wallTypeDisplay },
+            { key: "Control Number", value: controlNumber },
+            { key: "Shipping ZIP", value: shipping.zip },
+            { key: "Seal Subtotal", value: dollars(sealSubtotal) },
           ],
-        }
+        },
+        {
+          title: "Freight",
+          quantity: 1,
+          originalUnitPriceWithCurrency: {
+            amount: String(shipping.amount),
+            currencyCode: "USD",
+          },
+          taxable: false,
+          requiresShipping: false,
+        },
       ],
     },
   };
