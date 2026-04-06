@@ -1040,26 +1040,28 @@ export async function action({ request }: ActionFunctionArgs) {
     `Options: ${calc.notes.join(", ")}`,
   ].filter(Boolean);
 
-    const cleanDescription = `(A ${payload.a})(B ${payload.b})(C ${payload.c})(D ${payload.d}) | Control # ${controlNumber}`;
+  const cleanDescription = `(A ${payload.a})(B ${payload.b})(C ${payload.c})(D ${payload.d})(E ${payload.e})(F ${payload.f})(G ${payload.g})(H ${payload.h})(I ${payload.i})(J ${payload.j})(K ${payload.k})(L ${payload.l})(M ${payload.m})(N ${payload.n})(O ${payload.o})(P ${payload.p})(Q ${payload.q})(R ${calc.footerMaterialDisplay})(S ${calc.wallTypeDisplay}) | Control # ${controlNumber}`;
 
   const variables = {
     input: {
-      note: `Control #: ${controlNumber} | Qty: ${quantity} | Unit: ${dollars(calc.totalEstimatedPrice)} | Freight: ${dollars(shipping.amount)} | ZIP: ${shipping.zip} | Total: ${dollars(grandTotal)}`,
+      note: `Qty: ${quantity} | Unit: ${dollars(calc.totalEstimatedPrice)} | Freight: ${dollars(shipping.amount)} | ZIP: ${shipping.zip} | Subtotal: ${dollars(grandTotal)}`,
       tags: ["dock-seal-config"],
       lineItems: [
         {
           title,
-          quantity: quantity,
+          quantity: 1,
           originalUnitPriceWithCurrency: {
-            amount: calc.totalEstimatedPrice,
+            amount: grandTotal,
             currencyCode: "USD",
           },
           taxable: true,
           customAttributes: [
             { key: "Config", value: cleanDescription },
-            { key: "Control #", value: controlNumber },
+            { key: "Quantity", value: String(quantity) },
+            { key: "Unit Price", value: dollars(calc.totalEstimatedPrice) },
+            { key: "Freight", value: dollars(shipping.amount) },
             { key: "ZIP", value: shipping.zip },
-            { key: "Freight", value: String(shipping.amount) }
+            { key: "Subtotal", value: dollars(grandTotal) },
           ],
         }
       ],
