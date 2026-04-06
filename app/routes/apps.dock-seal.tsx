@@ -1075,22 +1075,233 @@ export async function action({ request }: ActionFunctionArgs) {
     return json({ ok: false, message: calc.message }, { status: 400 });
   }
 
-  const zipLookup = await lookupStateFromZip(payload.ship_zip);
-  if (!zipLookup.ok) {
-    return json({ ok: false, message: zipLookup.message }, { status: 400 });
+
+const zipLookup = await lookupStateFromZip(payload.ship_zip);
+if (!zipLookup.ok) {
+  return json({ ok: false, message: zipLookup.message }, { status: 400 });
+}
+
+const shipping = {
+  ok: true as const,
+  state: zipLookup.state,
+  quantity,
+  zone: "Native Shopify Shipping",
+  amount: 0,
+  zip: zipLookup.zip,
+};
+
+const sealSubtotal = calc.totalEstimatedPrice * quantity;
+const grandTotal = sealSubtotal;
+const controlNumber = generateControlNumber();
+
+const mutation = `#graphql
+  mutation draftOrderCreate($input: DraftOrderInput!) {
+    draftOrderCreate(input: $input) {
+      draftOrder {
+        id
+        invoiceUrl
+        name
+      }
+      userErrors {
+        field
+        message
+      }
+    }
+  }
+`;
+
+const title =
+  calc.series === "1000"
+    ? "Dock Seal with Head Pad"
+    : "Dock Seal with Head Cap";
+
+const selectedVariantId =
+  calc.series === "1000"
+    ? "gid://shopify/ProductVariant/48194762735864"
+    : "gid://shopify/ProductVariant/48194762768632";
+
+const noteLines = [
+  "Dock seal generated from configurator",
+  `Control Number: ${controlNumber}`,
+  `Series: ${calc.series}`,
+  `Quantity: ${quantity}`,
+  `Per Seal Price: ${dollars(calc.totalEstimatedPrice)}`,
+  `Seal Subtotal: ${dollars(sealSubtotal)}`,
+  `Shipping ZIP: ${shipping.zip}`,
+  `Shipping State: ${shipping.state}`,
+  `Shipping Mode: ${shipping.zone}`,
+  `Projection: ${calc.projection}"`,
+  `Top Projection: ${calc.topProjection}"`,
+  `Bevel: ${calc.selectedBevelCode}`,
+  `Overall Face Footprint: ${calc.overallFaceFootprint}"`,
+  `Backing Type: ${calc.backingType}`,
+  `Footer Material: ${calc.footerMaterialDisplay}`,
+  `Wall Type: ${calc.wallTypeDisplay}`,
+  calc.backingNote ? `Backing Note: ${calc.backingNote}` : "",
+  calc.truckTypeNote ? `Truck Type Note: ${calc.truckTypeNote}` : "",
+  `Options: ${calc.notes.join(", ")}`,
+].filter(Boolean);
+
+const itemDetails =
+  `(A ${payload.a})` +
+  `(B ${payload.b})` +
+  `(C ${payload.c})` +
+  `(D ${payload.d})` +
+  `(E ${payload.e})` +
+  `(F ${payload.f})` +
+  `(G ${payload.g})` +
+  `(H ${payload.h})` +
+  `(I ${payload.i})` +
+  `(J ${payload.j})` +
+  `(K ${payload.k})` +
+  `(L ${payload.l})` +
+  `(M ${payload.m})` +
+  `(N ${payload.n})` +
+  `(O ${payload.o})` +
+  `(P ${payload.p})` +
+  `(Q ${payload.q})` +
+  `(R ${calc.footerMaterialDisplay})` +
+  `(S ${calc.wallTypeDisplay})` +
+  `(Unit Price ${dollars(calc.totalEstimatedPrice)})` +
+  `(Control # ${controlNumber})`;
+
+const variables = {
+  input: {
+    note: noteLines.join("\n"),
+    tags: ["dock-seal-config"],
+    lineItems: [
+      {
+        variantId: selectedVariantId,
+        quantity: quantity,
+        priceOverride: {
+          amount: String(calc.totalEstimatedPrice),
+          currencyCode: "USD",
+        },
+        customAttributes: [
+          { key: "Details", value: itemDetails },
+        ],
+      },
+    ],
+  },
+};
+
+const response = await admin.graphql(mutation, { variables });
+const responseJson = await response.json();
+
+const data = responseJson.data?.draftOrderCreate;
+const userErrors = data?.userErrors || [];
+
+if (userErrors.length) {
+  return json(
+    {
+      ok: false,
+      message: userErrors.map((e: { message: string }) => e.message).join(" | "),
+    },
+    { status: 400 },
+  );
+}
+
+const invoiceUrl = data.draftOrder.invoiceUrl as string;
+const draftOrderName = data.draftOrder.name as string;
+
+console.log("=== DOCK SEAL EMAIL BLOCK START ===");
+const resendApiKey = process.env.RESEND_API_KEY;
+const configEmailTo = process.env.CONFIG_EMAIL_TO;
+const configEmailFrom = process.env.CONFIG_EMAIL_FROM;
+
+let emailSent = false;
+let emailWarning = "";
+
+console.log("Resend env check:", {
+  hasApiKey: Boolean(resendApiKey),
+  hasTo: Boolean(configEmailTo),
+  hasFrom: Boolean(configEmailFrom),
+  controlNumber,
+});
+
+if (resendApiKey && configEmailTo && configEmailFrom) {
+  try {
+    const resend = new Resend(resendApiKey);
+
+    const apiKeyListResult = await resend.apiKeys.list();
+    console.log("Resend apiKeys.list response:", JSON.stringify(apiKeyListResult));
+
+    const html = buildEmailHtml({
+      controlNumber,
+      payload,
+      calc,
+      shipping,
+      quantity,
+      sealSubtotal,
+      grandTotal,
+      title,
+      invoiceUrl,
+      draftOrderName,
+    });
+
+    const text = buildEmailText({
+      controlNumber,
+      payload,
+      calc,
+      shipping,
+      quantity,
+      sealSubtotal,
+      grandTotal,
+      title,
+      invoiceUrl,
+      draftOrderName,
+    });
+
+    console.log("Attempting Resend send for control number:", controlNumber);
+
+    const emailResult = await resend.emails.send({
+      from: configEmailFrom,
+      to: [configEmailTo],
+      subject: `Dock Seal Submission ${controlNumber}`,
+      html,
+      text,
+    });
+
+    console.log("Raw Resend response:", JSON.stringify(emailResult));
+
+    if (emailResult.error) {
+      emailWarning = emailResult.error.message || "Submission email failed to send.";
+      console.error("Resend error:", emailResult.error);
+    } else {
+      emailSent = true;
+      console.log("Resend email sent successfully");
+    }
+  } catch (error) {
+    emailWarning =
+      error instanceof Error ? error.message : "Submission email failed to send.";
+    console.error("Resend exception:", error);
+  }
+} else {
+  emailWarning =
+    "Submission email was skipped because RESEND_API_KEY, CONFIG_EMAIL_TO, or CONFIG_EMAIL_FROM is missing.";
+  console.error("Resend skipped:", {
+    hasApiKey: Boolean(resendApiKey),
+    hasTo: Boolean(configEmailTo),
+    hasFrom: Boolean(configEmailFrom),
+  });
+}
+
+console.log("=== DOCK SEAL EMAIL BLOCK END ===", {
+  emailSent,
+  emailWarning,
+  controlNumber,
+});
+
+  return json({ ok: false, message: zipLookup.message }, { status: 400 });
   }
 
-  const shipping = {
-    ok: true as const,
-    state: zipLookup.state,
-    quantity,
-    zone: "Native Shopify Shipping",
-    amount: 0,
-    zip: zipLookup.zip,
-  };
+  const shipping = getShippingPriceFromState(zipLookup.state, quantity, zipLookup.zip);
+  if (!shipping.ok) {
+    return json({ ok: false, message: shipping.message }, { status: 400 });
+  }
 
   const sealSubtotal = calc.totalEstimatedPrice * quantity;
-  const grandTotal = sealSubtotal;
+  const grandTotal = sealSubtotal + shipping.amount;
   const controlNumber = generateControlNumber();
 
   const mutation = `#graphql
@@ -1113,11 +1324,6 @@ export async function action({ request }: ActionFunctionArgs) {
     calc.series === "1000"
       ? "Dock Seal with Head Pad"
       : "Dock Seal with Head Cap";
-
-  const selectedVariantId =
-    calc.series === "1000"
-      ? "gid://shopify/ProductVariant/48194762735864"
-      : "gid://shopify/ProductVariant/48194762768632";
 
   const noteLines = [
     "Dock seal generated from configurator",
@@ -1143,43 +1349,55 @@ export async function action({ request }: ActionFunctionArgs) {
     `Options: ${calc.notes.join(", ")}`,
   ].filter(Boolean);
 
-  const itemDetails =
-    `(A ${payload.a})` +
-    `(B ${payload.b})` +
-    `(C ${payload.c})` +
-    `(D ${payload.d})` +
-    `(E ${payload.e})` +
-    `(F ${payload.f})` +
-    `(G ${payload.g})` +
-    `(H ${payload.h})` +
-    `(I ${payload.i})` +
-    `(J ${payload.j})` +
-    `(K ${payload.k})` +
-    `(L ${payload.l})` +
-    `(M ${payload.m})` +
-    `(N ${payload.n})` +
-    `(O ${payload.o})` +
-    `(P ${payload.p})` +
-    `(Q ${payload.q})` +
-    `(R ${calc.footerMaterialDisplay})` +
-    `(S ${calc.wallTypeDisplay})` +
-    `(Unit Price ${dollars(calc.totalEstimatedPrice)})` +
-    `(Control # ${controlNumber})`;
-
   const variables = {
     input: {
       note: noteLines.join("\n"),
       tags: ["dock-seal-config"],
       lineItems: [
         {
-          variantId: selectedVariantId,
-          quantity: quantity,
-          priceOverride: {
-            amount: String(calc.totalEstimatedPrice),
+          title,
+          quantity: 1,
+          originalUnitPriceWithCurrency: {
+            amount: grandTotal,
             currencyCode: "USD",
           },
+          taxable: false,
           customAttributes: [
-            { key: "Details", value: itemDetails },
+            { key: "Control Number", value: controlNumber },
+            { key: "A", value: payload.a },
+            { key: "B", value: payload.b },
+            { key: "C", value: payload.c },
+            { key: "D", value: payload.d },
+            { key: "E", value: payload.e },
+            { key: "F", value: payload.f },
+            { key: "G", value: payload.g },
+            { key: "H", value: payload.h },
+            { key: "I", value: payload.i },
+            { key: "J", value: payload.j },
+            { key: "K", value: payload.k },
+            { key: "L", value: payload.l },
+            { key: "M", value: payload.m },
+            { key: "N", value: payload.n },
+            { key: "O", value: payload.o },
+            { key: "P", value: payload.p },
+            { key: "Q", value: payload.q },
+            { key: "R", value: calc.footerMaterialDisplay },
+            { key: "S", value: calc.wallTypeDisplay },
+            { key: "Series", value: calc.series },
+            { key: "Projection", value: String(calc.projection) },
+            { key: "Top Projection", value: String(calc.topProjection) },
+            { key: "Bevel", value: calc.selectedBevelCode },
+            { key: "Overall Face Footprint", value: String(calc.overallFaceFootprint) },
+            { key: "Wall Back Footprint", value: String(calc.wallBackFootprint) },
+            { key: "Backing Type", value: calc.backingType },
+            { key: "Quantity", value: String(quantity) },
+            { key: "Per Seal Price", value: String(calc.totalEstimatedPrice) },
+            { key: "Seal Subtotal", value: String(sealSubtotal) },
+            { key: "Shipping ZIP", value: shipping.zip },
+            { key: "Shipping State", value: shipping.state },
+            { key: "Shipping Zone", value: shipping.zone },
+            { key: "Shipping Charge", value: String(shipping.amount) },
+            { key: "Grand Total", value: String(grandTotal) },
           ],
         },
       ],
@@ -1205,20 +1423,12 @@ export async function action({ request }: ActionFunctionArgs) {
   const invoiceUrl = data.draftOrder.invoiceUrl as string;
   const draftOrderName = data.draftOrder.name as string;
 
-  console.log("=== DOCK SEAL EMAIL BLOCK START ===");
   const resendApiKey = process.env.RESEND_API_KEY;
   const configEmailTo = process.env.CONFIG_EMAIL_TO;
   const configEmailFrom = process.env.CONFIG_EMAIL_FROM;
 
   let emailSent = false;
   let emailWarning = "";
-
-  console.log("Resend env check:", {
-    hasApiKey: Boolean(resendApiKey),
-    hasTo: Boolean(configEmailTo),
-    hasFrom: Boolean(configEmailFrom),
-    controlNumber,
-  });
 
   if (resendApiKey && configEmailTo && configEmailFrom) {
     try {
@@ -1235,58 +1445,27 @@ export async function action({ request }: ActionFunctionArgs) {
         invoiceUrl,
         draftOrderName,
       });
-      const text = buildEmailText({
-        controlNumber,
-        payload,
-        calc,
-        shipping,
-        quantity,
-        sealSubtotal,
-        grandTotal,
-        title,
-        invoiceUrl,
-        draftOrderName,
-      });
-
-      console.log("Attempting Resend send for control number:", controlNumber);
 
       const emailResult = await resend.emails.send({
         from: configEmailFrom,
         to: [configEmailTo],
         subject: `Dock Seal Submission ${controlNumber}`,
         html,
-        text,
       });
-
-      console.log("Raw Resend response:", JSON.stringify(emailResult));
 
       if (emailResult.error) {
         emailWarning = emailResult.error.message || "Submission email failed to send.";
-        console.error("Resend error:", emailResult.error);
       } else {
         emailSent = true;
-        console.log("Resend email sent successfully");
       }
     } catch (error) {
       emailWarning =
         error instanceof Error ? error.message : "Submission email failed to send.";
-      console.error("Resend exception:", error);
     }
   } else {
     emailWarning =
       "Submission email was skipped because RESEND_API_KEY, CONFIG_EMAIL_TO, or CONFIG_EMAIL_FROM is missing.";
-    console.error("Resend skipped:", {
-      hasApiKey: Boolean(resendApiKey),
-      hasTo: Boolean(configEmailTo),
-      hasFrom: Boolean(configEmailFrom),
-    });
   }
-
-  console.log("=== DOCK SEAL EMAIL BLOCK END ===", {
-    emailSent,
-    emailWarning,
-    controlNumber,
-  });
 
   return json({
     ok: true,
