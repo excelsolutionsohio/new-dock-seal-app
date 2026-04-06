@@ -1008,6 +1008,28 @@ export async function action({ request }: ActionFunctionArgs) {
       ? "gid://shopify/ProductVariant/48194762735864"
       : "gid://shopify/ProductVariant/48194762768632";
 
+  const checkoutDetails =
+    `(A ${payload.a})` +
+    `(B ${payload.b})` +
+    `(C ${payload.c})` +
+    `(D ${payload.d})` +
+    `(E ${payload.e})` +
+    `(F ${payload.f})` +
+    `(G ${payload.g})` +
+    `(H ${payload.h})` +
+    `(I ${payload.i})` +
+    `(J ${payload.j})` +
+    `(K ${payload.k})` +
+    `(L ${payload.l})` +
+    `(M ${payload.m})` +
+    `(N ${payload.n})` +
+    `(O ${payload.o})` +
+    `(P ${payload.p})` +
+    `(Q ${payload.q})` +
+    `(R ${calc.footerMaterialDisplay})` +
+    `(S ${calc.wallTypeDisplay})` +
+    ` Unit Price ${dollars(calc.totalEstimatedPrice)}`;
+
   const noteLines = [
     "Dock seal generated from configurator",
     `Control Number: ${controlNumber}`,
@@ -1041,25 +1063,7 @@ export async function action({ request }: ActionFunctionArgs) {
             currencyCode: "USD",
           },
           customAttributes: [
-            { key: "A", value: payload.a },
-            { key: "B", value: payload.b },
-            { key: "C", value: payload.c },
-            { key: "D", value: payload.d },
-            { key: "E", value: payload.e },
-            { key: "F", value: payload.f },
-            { key: "G", value: payload.g },
-            { key: "H", value: payload.h },
-            { key: "I", value: payload.i },
-            { key: "J", value: payload.j },
-            { key: "K", value: payload.k },
-            { key: "L", value: payload.l },
-            { key: "M", value: payload.m },
-            { key: "N", value: payload.n },
-            { key: "O", value: payload.o },
-            { key: "P", value: payload.p },
-            { key: "Q", value: payload.q },
-            { key: "R", value: calc.footerMaterialDisplay },
-            { key: "S", value: calc.wallTypeDisplay },
+            { key: "Details", value: checkoutDetails },
             { key: "Control Number", value: controlNumber },
           ],
         },
