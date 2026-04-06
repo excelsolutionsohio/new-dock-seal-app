@@ -816,6 +816,7 @@ function buildEmailHtml(args: {
   controlNumber: string;
   payload: Payload;
   calc: Exclude<CalcResult, { ok: false }>;
+  shipping: Exclude<ShippingResult, { ok: false }>;
   quantity: number;
   sealSubtotal: number;
   grandTotal: number;
@@ -823,7 +824,7 @@ function buildEmailHtml(args: {
   invoiceUrl: string;
   draftOrderName: string;
 }) {
-  const { controlNumber, payload, calc, quantity, sealSubtotal, grandTotal, title, invoiceUrl, draftOrderName } = args;
+  const { controlNumber, payload, calc, shipping, quantity, sealSubtotal, grandTotal, title, invoiceUrl, draftOrderName } = args;
 
   const enteredRows = [
     ["A", payload.a], ["B", payload.b], ["C", payload.c], ["D", payload.d],
@@ -831,7 +832,7 @@ function buildEmailHtml(args: {
     ["I", payload.i], ["J", payload.j], ["K", payload.k], ["L", payload.l],
     ["M", payload.m], ["N", payload.n], ["O", payload.o], ["P", payload.p],
     ["Q", payload.q], ["R", calc.footerMaterialDisplay], ["S", calc.wallTypeDisplay],
-    ["Quantity", String(quantity)], ["Shipping ZIP", payload.ship_zip],
+    ["Quantity", String(quantity)], ["Shipping ZIP", shipping.zip], ["Shipping State", shipping.state],
   ];
 
   const calculatedRows = [
@@ -874,6 +875,8 @@ function buildEmailHtml(args: {
     ["Blockout Adder", dollars(calc.blockoutAdder)],
     ["Per Seal Price", dollars(calc.totalEstimatedPrice)],
     ["Seal Subtotal", dollars(sealSubtotal)],
+    ["Shipping Zone", shipping.zone],
+    ["Shipping Charge", dollars(shipping.amount)],
     ["Grand Total", dollars(grandTotal)],
   ];
 
@@ -919,6 +922,101 @@ function buildEmailHtml(args: {
       }
     </div>
   `;
+}
+
+
+
+function buildEmailText(args: {
+  controlNumber: string;
+  payload: Payload;
+  calc: Exclude<CalcResult, { ok: false }>;
+  shipping: Exclude<ShippingResult, { ok: false }>;
+  quantity: number;
+  sealSubtotal: number;
+  grandTotal: number;
+  title: string;
+  invoiceUrl: string;
+  draftOrderName: string;
+}) {
+  const { controlNumber, payload, calc, shipping, quantity, sealSubtotal, grandTotal, title, invoiceUrl, draftOrderName } = args;
+
+  return [
+    `Dock Seal Submission`,
+    `Control Number: ${controlNumber}`,
+    `Draft Order: ${draftOrderName}`,
+    `Invoice URL: ${invoiceUrl}`,
+    ``,
+    `Entered Inputs`,
+    `A: ${payload.a}`,
+    `B: ${payload.b}`,
+    `C: ${payload.c}`,
+    `D: ${payload.d}`,
+    `E: ${payload.e}`,
+    `F: ${payload.f}`,
+    `G: ${payload.g}`,
+    `H: ${payload.h}`,
+    `I: ${payload.i}`,
+    `J: ${payload.j}`,
+    `K: ${payload.k}`,
+    `L: ${payload.l}`,
+    `M: ${payload.m}`,
+    `N: ${payload.n}`,
+    `O: ${payload.o}`,
+    `P: ${payload.p}`,
+    `Q: ${payload.q}`,
+    `R: ${calc.footerMaterialDisplay}`,
+    `S: ${calc.wallTypeDisplay}`,
+    `Quantity: ${quantity}`,
+    `Shipping ZIP: ${shipping.zip}`,
+    `Shipping State: ${shipping.state}`,
+    ``,
+    `Calculated Configuration`,
+    `Item Title: ${title}`,
+    `Series: ${calc.series}`,
+    `Projection: ${calc.projection}"`,
+    `Top Projection: ${calc.topProjection}"`,
+    `Bevel: ${calc.selectedBevelCode}`,
+    `Overall Face Footprint: ${calc.overallFaceFootprint}"`,
+    `Wall Back Footprint: ${calc.wallBackFootprint}"`,
+    `Offset Each Side: ${calc.offsetEachSide}"`,
+    `Required Clearance Each Side: ${calc.requiredClearanceEachSide}"`,
+    `Bottom Wall to Truck Distance: ${calc.bottomWallToTruckDistance}"`,
+    `Top Wall to Truck Distance: ${calc.topWallToTruckDistance.toFixed(2)}"`,
+    `Required Top Wall to Truck Min: ${calc.requiredTopWallToTruckMin}"`,
+    `Siding Reduction: ${calc.sidingReduction}"`,
+    `Blockout Thickness Used: ${calc.blockoutThicknessUsed}"`,
+    `Backing Type: ${calc.backingType}`,
+    `Side Pad Height: ${calc.sidePadHeight}"`,
+    `Required Top Clearance: ${calc.requiredTopClearance}"`,
+    `Calculated Top Clearance: ${calc.calculatedTopClearance}"`,
+    `Opening Top From Drive: ${calc.openingTopFromDrive}"`,
+    `Slope Percent: ${calc.slopePercent.toFixed(2)}%`,
+    `Head Pad Height: ${calc.headPadHeight}"`,
+    `Drop Curtain: ${calc.dropCurtain}"`,
+    `Head Curtain Length: ${calc.headCurtainLength}"`,
+    `Split Curtain: ${calc.splitCurtain}"`,
+    `Front Top Of Assembly: ${calc.frontTopOfAssembly ? `${calc.frontTopOfAssembly}"` : "—"}`,
+    `Back Top Of Assembly: ${calc.backTopOfAssembly ? `${calc.backTopOfAssembly}"` : "—"}`,
+    `Base Sales Price: ${dollars(calc.baseSalesPrice)}`,
+    `Bevel Adder: ${dollars(calc.bevelAdder)}`,
+    `Pleat Adder: ${dollars(calc.pleatAdder)}`,
+    `Head Pad Height Adder: ${dollars(calc.headPadHeightAdder)}`,
+    `Drop Curtain Adder: ${dollars(calc.dropCurtainAdder)}`,
+    `Head Cap Adder: ${dollars(calc.headCapAdder)}`,
+    `Head Curtain Adder: ${dollars(calc.headCurtainAdder)}`,
+    `Steel Back Adder: ${dollars(calc.steelBackAdder)}`,
+    `Blockout Adder: ${dollars(calc.blockoutAdder)}`,
+    `Per Seal Price: ${dollars(calc.totalEstimatedPrice)}`,
+    `Seal Subtotal: ${dollars(sealSubtotal)}`,
+    `Shipping Zone: ${shipping.zone}`,
+    `Shipping Charge: ${dollars(shipping.amount)}`,
+    `Grand Total: ${dollars(grandTotal)}`,
+    ``,
+    `Notes / Options`,
+    ...calc.notes.map((note) => `- ${note}`),
+    calc.backingNote ? `Backing Note: ${calc.backingNote}` : "",
+    calc.truckTypeNote ? `Truck Type Note: ${calc.truckTypeNote}` : "",
+  ].filter(Boolean).join(`\n`);
 }
 
 export async function loader({ request }: LoaderFunctionArgs) {
@@ -978,8 +1076,18 @@ export async function action({ request }: ActionFunctionArgs) {
     return json({ ok: false, message: calc.message }, { status: 400 });
   }
 
+  const zipLookup = await lookupStateFromZip(payload.ship_zip);
+  if (!zipLookup.ok) {
+    return json({ ok: false, message: zipLookup.message }, { status: 400 });
+  }
+
+  const shipping = getShippingPriceFromState(zipLookup.state, quantity, zipLookup.zip);
+  if (!shipping.ok) {
+    return json({ ok: false, message: shipping.message }, { status: 400 });
+  }
+
   const sealSubtotal = calc.totalEstimatedPrice * quantity;
-  const grandTotal = sealSubtotal;
+  const grandTotal = sealSubtotal + shipping.amount;
   const controlNumber = generateControlNumber();
 
   const mutation = `#graphql
@@ -1003,33 +1111,6 @@ export async function action({ request }: ActionFunctionArgs) {
       ? "Dock Seal with Head Pad"
       : "Dock Seal with Head Cap";
 
-  const selectedVariantId =
-    calc.series === "1000"
-      ? "gid://shopify/ProductVariant/48194762735864"
-      : "gid://shopify/ProductVariant/48194762768632";
-
-  const checkoutDetails =
-    `(A ${payload.a})` +
-    `(B ${payload.b})` +
-    `(C ${payload.c})` +
-    `(D ${payload.d})` +
-    `(E ${payload.e})` +
-    `(F ${payload.f})` +
-    `(G ${payload.g})` +
-    `(H ${payload.h})` +
-    `(I ${payload.i})` +
-    `(J ${payload.j})` +
-    `(K ${payload.k})` +
-    `(L ${payload.l})` +
-    `(M ${payload.m})` +
-    `(N ${payload.n})` +
-    `(O ${payload.o})` +
-    `(P ${payload.p})` +
-    `(Q ${payload.q})` +
-    `(R ${calc.footerMaterialDisplay})` +
-    `(S ${calc.wallTypeDisplay})` +
-    ` Unit Price ${dollars(calc.totalEstimatedPrice)}`;
-
   const noteLines = [
     "Dock seal generated from configurator",
     `Control Number: ${controlNumber}`,
@@ -1037,7 +1118,11 @@ export async function action({ request }: ActionFunctionArgs) {
     `Quantity: ${quantity}`,
     `Per Seal Price: ${dollars(calc.totalEstimatedPrice)}`,
     `Seal Subtotal: ${dollars(sealSubtotal)}`,
-    `Shipping ZIP: ${payload.ship_zip}`,
+    `Shipping ZIP: ${shipping.zip}`,
+    `Shipping State: ${shipping.state}`,
+    `Shipping Zone: ${shipping.zone}`,
+    `Shipping Charge: ${dollars(shipping.amount)}`,
+    `Grand Total: ${dollars(grandTotal)}`,
     `Projection: ${calc.projection}"`,
     `Top Projection: ${calc.topProjection}"`,
     `Bevel: ${calc.selectedBevelCode}`,
@@ -1056,15 +1141,49 @@ export async function action({ request }: ActionFunctionArgs) {
       tags: ["dock-seal-config"],
       lineItems: [
         {
-          variantId: selectedVariantId,
-          quantity: quantity,
-          priceOverride: {
-            amount: String(calc.totalEstimatedPrice),
+          title,
+          quantity: 1,
+          originalUnitPriceWithCurrency: {
+            amount: grandTotal,
             currencyCode: "USD",
           },
+          taxable: false,
           customAttributes: [
-            { key: "Details", value: checkoutDetails },
             { key: "Control Number", value: controlNumber },
+            { key: "A", value: payload.a },
+            { key: "B", value: payload.b },
+            { key: "C", value: payload.c },
+            { key: "D", value: payload.d },
+            { key: "E", value: payload.e },
+            { key: "F", value: payload.f },
+            { key: "G", value: payload.g },
+            { key: "H", value: payload.h },
+            { key: "I", value: payload.i },
+            { key: "J", value: payload.j },
+            { key: "K", value: payload.k },
+            { key: "L", value: payload.l },
+            { key: "M", value: payload.m },
+            { key: "N", value: payload.n },
+            { key: "O", value: payload.o },
+            { key: "P", value: payload.p },
+            { key: "Q", value: payload.q },
+            { key: "R", value: calc.footerMaterialDisplay },
+            { key: "S", value: calc.wallTypeDisplay },
+            { key: "Series", value: calc.series },
+            { key: "Projection", value: String(calc.projection) },
+            { key: "Top Projection", value: String(calc.topProjection) },
+            { key: "Bevel", value: calc.selectedBevelCode },
+            { key: "Overall Face Footprint", value: String(calc.overallFaceFootprint) },
+            { key: "Wall Back Footprint", value: String(calc.wallBackFootprint) },
+            { key: "Backing Type", value: calc.backingType },
+            { key: "Quantity", value: String(quantity) },
+            { key: "Per Seal Price", value: String(calc.totalEstimatedPrice) },
+            { key: "Seal Subtotal", value: String(sealSubtotal) },
+            { key: "Shipping ZIP", value: shipping.zip },
+            { key: "Shipping State", value: shipping.state },
+            { key: "Shipping Zone", value: shipping.zone },
+            { key: "Shipping Charge", value: String(shipping.amount) },
+            { key: "Grand Total", value: String(grandTotal) },
           ],
         },
       ],
@@ -1104,6 +1223,19 @@ export async function action({ request }: ActionFunctionArgs) {
         controlNumber,
         payload,
         calc,
+        shipping,
+        quantity,
+        sealSubtotal,
+        grandTotal,
+        title,
+        invoiceUrl,
+        draftOrderName,
+      });
+      const text = buildEmailText({
+        controlNumber,
+        payload,
+        calc,
+        shipping,
         quantity,
         sealSubtotal,
         grandTotal,
@@ -1117,20 +1249,29 @@ export async function action({ request }: ActionFunctionArgs) {
         to: [configEmailTo],
         subject: `Dock Seal Submission ${controlNumber}`,
         html,
+        text,
       });
 
       if (emailResult.error) {
         emailWarning = emailResult.error.message || "Submission email failed to send.";
+        console.error("Resend error:", emailResult.error);
       } else {
         emailSent = true;
+        console.log("Resend email sent:", emailResult.data);
       }
     } catch (error) {
       emailWarning =
         error instanceof Error ? error.message : "Submission email failed to send.";
+      console.error("Resend exception:", error);
     }
   } else {
     emailWarning =
       "Submission email was skipped because RESEND_API_KEY, CONFIG_EMAIL_TO, or CONFIG_EMAIL_FROM is missing.";
+    console.error("Resend skipped:", {
+      hasApiKey: Boolean(resendApiKey),
+      hasTo: Boolean(configEmailTo),
+      hasFrom: Boolean(configEmailFrom),
+    });
   }
 
   return json({
