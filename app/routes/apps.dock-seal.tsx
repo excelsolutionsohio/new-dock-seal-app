@@ -1040,57 +1040,28 @@ export async function action({ request }: ActionFunctionArgs) {
     `Options: ${calc.notes.join(", ")}`,
   ].filter(Boolean);
 
+    const cleanDescription = `(A ${payload.a})(B ${payload.b})(C ${payload.c})(D ${payload.d}) | Control # ${controlNumber}`;
+
   const variables = {
     input: {
-      note: noteLines.join("\n"),
+      note: `Control #: ${controlNumber} | Qty: ${quantity} | Unit: ${dollars(calc.totalEstimatedPrice)} | Freight: ${dollars(shipping.amount)} | ZIP: ${shipping.zip} | Total: ${dollars(grandTotal)}`,
       tags: ["dock-seal-config"],
       lineItems: [
         {
           title,
-          quantity: 1,
+          quantity: quantity,
           originalUnitPriceWithCurrency: {
-            amount: grandTotal,
+            amount: calc.totalEstimatedPrice,
             currencyCode: "USD",
           },
-          taxable: false,
+          taxable: true,
           customAttributes: [
-            { key: "Control Number", value: controlNumber },
-            { key: "A", value: payload.a },
-            { key: "B", value: payload.b },
-            { key: "C", value: payload.c },
-            { key: "D", value: payload.d },
-            { key: "E", value: payload.e },
-            { key: "F", value: payload.f },
-            { key: "G", value: payload.g },
-            { key: "H", value: payload.h },
-            { key: "I", value: payload.i },
-            { key: "J", value: payload.j },
-            { key: "K", value: payload.k },
-            { key: "L", value: payload.l },
-            { key: "M", value: payload.m },
-            { key: "N", value: payload.n },
-            { key: "O", value: payload.o },
-            { key: "P", value: payload.p },
-            { key: "Q", value: payload.q },
-            { key: "R", value: calc.footerMaterialDisplay },
-            { key: "S", value: calc.wallTypeDisplay },
-            { key: "Series", value: calc.series },
-            { key: "Projection", value: String(calc.projection) },
-            { key: "Top Projection", value: String(calc.topProjection) },
-            { key: "Bevel", value: calc.selectedBevelCode },
-            { key: "Overall Face Footprint", value: String(calc.overallFaceFootprint) },
-            { key: "Wall Back Footprint", value: String(calc.wallBackFootprint) },
-            { key: "Backing Type", value: calc.backingType },
-            { key: "Quantity", value: String(quantity) },
-            { key: "Per Seal Price", value: String(calc.totalEstimatedPrice) },
-            { key: "Seal Subtotal", value: String(sealSubtotal) },
-            { key: "Shipping ZIP", value: shipping.zip },
-            { key: "Shipping State", value: shipping.state },
-            { key: "Shipping Zone", value: shipping.zone },
-            { key: "Shipping Charge", value: String(shipping.amount) },
-            { key: "Grand Total", value: String(grandTotal) },
+            { key: "Config", value: cleanDescription },
+            { key: "Control #", value: controlNumber },
+            { key: "ZIP", value: shipping.zip },
+            { key: "Freight", value: String(shipping.amount) }
           ],
-        },
+        }
       ],
     },
   };
