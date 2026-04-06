@@ -1231,47 +1231,26 @@ export async function action({ request }: ActionFunctionArgs) {
         invoiceUrl,
         draftOrderName,
       });
-      const text = buildEmailText({
-        controlNumber,
-        payload,
-        calc,
-        shipping,
-        quantity,
-        sealSubtotal,
-        grandTotal,
-        title,
-        invoiceUrl,
-        draftOrderName,
-      });
 
       const emailResult = await resend.emails.send({
         from: configEmailFrom,
         to: [configEmailTo],
         subject: `Dock Seal Submission ${controlNumber}`,
         html,
-        text,
       });
 
       if (emailResult.error) {
         emailWarning = emailResult.error.message || "Submission email failed to send.";
-        console.error("Resend error:", emailResult.error);
       } else {
         emailSent = true;
-        console.log("Resend email sent:", emailResult.data);
       }
     } catch (error) {
       emailWarning =
         error instanceof Error ? error.message : "Submission email failed to send.";
-      console.error("Resend exception:", error);
     }
   } else {
     emailWarning =
       "Submission email was skipped because RESEND_API_KEY, CONFIG_EMAIL_TO, or CONFIG_EMAIL_FROM is missing.";
-    console.error("Resend skipped:", {
-      hasApiKey: Boolean(resendApiKey),
-      hasTo: Boolean(configEmailTo),
-      hasFrom: Boolean(configEmailFrom),
-    });
   }
 
   return json({
@@ -1286,3 +1265,5 @@ export async function action({ request }: ActionFunctionArgs) {
     emailWarning,
   });
 }
+
+// EMAIL DEBUG PATCH FAILED TO AUTO-MERGE
