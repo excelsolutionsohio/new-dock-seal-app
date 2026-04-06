@@ -75,17 +75,6 @@ type CalcResult =
       backingNote: string;
     };
 
-type ShippingResult =
-  | { ok: false; message: string }
-  | {
-      ok: true;
-      state: string;
-      quantity: number;
-      zone: string;
-      amount: number;
-      zip: string;
-    };
-
 function parseNumber(value: string): number {
   if (!value) return 0;
   const num = parseFloat(value);
@@ -127,6 +116,110 @@ function generateControlNumber(): string {
   const ss = String(now.getUTCSeconds()).padStart(2, "0");
   const rand = Math.floor(1000 + Math.random() * 9000);
   return `DS-${yyyy}${mm}${dd}-${hh}${mi}${ss}-${rand}`;
+}
+
+
+function buildCheckoutItemDetails(payload: Payload, calc: Exclude<CalcResult, { ok: false }>, controlNumber: string): string {
+  return (
+    `(A ${payload.a})` +
+    `(B ${payload.b})` +
+    `(C ${payload.c})` +
+    `(D ${payload.d})` +
+    `(E ${payload.e})` +
+    `(F ${payload.f})` +
+    `(G ${payload.g})` +
+    `(H ${payload.h})` +
+    `(I ${payload.i})` +
+    `(J ${payload.j})` +
+    `(K ${payload.k})` +
+    `(L ${payload.l})` +
+    `(M ${payload.m})` +
+    `(N ${payload.n})` +
+    `(O ${payload.o})` +
+    `(P ${payload.p})` +
+    `(Q ${payload.q})` +
+    `(R ${calc.footerMaterialDisplay})` +
+    `(S ${calc.wallTypeDisplay})` +
+    `(Unit Price ${dollars(calc.totalEstimatedPrice)})` +
+    `(Control # ${controlNumber})`
+  );
+}
+
+function buildFlowNote(args: {
+  controlNumber: string;
+  payload: Payload;
+  calc: Exclude<CalcResult, { ok: false }>;
+  quantity: number;
+  sealSubtotal: number;
+  title: string;
+}) {
+  const { controlNumber, payload, calc, quantity, sealSubtotal, title } = args;
+
+  return [
+    "Dock seal generated from configurator",
+    `Control Number: ${controlNumber}`,
+    `Item Title: ${title}`,
+    `Series: ${calc.series}`,
+    `Quantity: ${quantity}`,
+    `Per Seal Price: ${dollars(calc.totalEstimatedPrice)}`,
+    `Seal Subtotal: ${dollars(sealSubtotal)}`,
+    `Shipping ZIP: ${payload.ship_zip}`,
+    `A: ${payload.a}`,
+    `B: ${payload.b}`,
+    `C: ${payload.c}`,
+    `D: ${payload.d}`,
+    `E: ${payload.e}`,
+    `F: ${payload.f}`,
+    `G: ${payload.g}`,
+    `H: ${payload.h}`,
+    `I: ${payload.i}`,
+    `J: ${payload.j}`,
+    `K: ${payload.k}`,
+    `L: ${payload.l}`,
+    `M: ${payload.m}`,
+    `N: ${payload.n}`,
+    `O: ${payload.o}`,
+    `P: ${payload.p}`,
+    `Q: ${payload.q}`,
+    `R: ${calc.footerMaterialDisplay}`,
+    `S: ${calc.wallTypeDisplay}`,
+    `Projection: ${calc.projection}"`,
+    `Top Projection: ${calc.topProjection}"`,
+    `Bevel: ${calc.selectedBevelCode}`,
+    `Overall Face Footprint: ${calc.overallFaceFootprint}"`,
+    `Wall Back Footprint: ${calc.wallBackFootprint}"`,
+    `Offset Each Side: ${calc.offsetEachSide}"`,
+    `Required Clearance Each Side: ${calc.requiredClearanceEachSide}"`,
+    `Bottom Wall to Truck Distance: ${calc.bottomWallToTruckDistance}"`,
+    `Top Wall to Truck Distance: ${calc.topWallToTruckDistance.toFixed(2)}"`,
+    `Required Top Wall to Truck Min: ${calc.requiredTopWallToTruckMin}"`,
+    `Siding Reduction: ${calc.sidingReduction}"`,
+    `Blockout Thickness Used: ${calc.blockoutThicknessUsed}"`,
+    `Backing Type: ${calc.backingType}`,
+    `Side Pad Height: ${calc.sidePadHeight}"`,
+    `Required Top Clearance: ${calc.requiredTopClearance}"`,
+    `Calculated Top Clearance: ${calc.calculatedTopClearance}"`,
+    `Opening Top From Drive: ${calc.openingTopFromDrive}"`,
+    `Slope Percent: ${calc.slopePercent.toFixed(2)}%`,
+    `Head Pad Height: ${calc.headPadHeight}"`,
+    `Drop Curtain: ${calc.dropCurtain}"`,
+    `Head Curtain Length: ${calc.headCurtainLength}"`,
+    `Split Curtain: ${calc.splitCurtain}"`,
+    `Front Top Of Assembly: ${calc.frontTopOfAssembly ? `${calc.frontTopOfAssembly}"` : "—"}`,
+    `Back Top Of Assembly: ${calc.backTopOfAssembly ? `${calc.backTopOfAssembly}"` : "—"}`,
+    `Base Sales Price: ${dollars(calc.baseSalesPrice)}`,
+    `Bevel Adder: ${dollars(calc.bevelAdder)}`,
+    `Pleat Adder: ${dollars(calc.pleatAdder)}`,
+    `Head Pad Height Adder: ${dollars(calc.headPadHeightAdder)}`,
+    `Drop Curtain Adder: ${dollars(calc.dropCurtainAdder)}`,
+    `Head Cap Adder: ${dollars(calc.headCapAdder)}`,
+    `Head Curtain Adder: ${dollars(calc.headCurtainAdder)}`,
+    `Steel Back Adder: ${dollars(calc.steelBackAdder)}`,
+    `Blockout Adder: ${dollars(calc.blockoutAdder)}`,
+    `Options: ${calc.notes.join(", ")}`,
+    calc.backingNote ? `Backing Note: ${calc.backingNote}` : "",
+    calc.truckTypeNote ? `Truck Type Note: ${calc.truckTypeNote}` : "",
+  ].filter(Boolean).join("\n");
 }
 
 const pricingTables = {
@@ -278,103 +371,6 @@ function getBlockoutPrice(
   }
 
   return totalFeet * ratePerFoot;
-}
-
-const ZONE_1 = new Set(["OH", "MI", "IN", "IL", "WI", "KY", "WV", "PA"]);
-const ZONE_2 = new Set(["MN", "IA", "MO", "TN", "VA", "MD", "DE", "NJ", "NY"]);
-const ZONE_3 = new Set(["ND", "SD", "NE", "KS", "OK", "AR", "LA", "MT", "WY", "CO", "NM", "AZ", "NV", "UT", "ID", "TX"]);
-const ZONE_4 = new Set(["WA", "OR", "CA", "ME", "NH", "VT", "MA", "RI", "CT", "NC", "SC", "GA", "FL", "MS", "AL", "DC"]);
-
-function normalizeZip(value: string): string {
-  return value.replace(/[^\d]/g, "").slice(0, 5);
-}
-
-async function lookupStateFromZip(zipRaw: string): Promise<{ ok: true; state: string; zip: string } | { ok: false; message: string }> {
-  const zip = normalizeZip(zipRaw);
-
-  if (zip.length !== 5) {
-    return { ok: false, message: "Enter a valid 5-digit shipping ZIP." };
-  }
-
-  const response = await fetch(`https://api.zippopotam.us/us/${zip}`);
-  if (!response.ok) {
-    return { ok: false, message: "Could not look up that shipping ZIP." };
-  }
-
-  const data = (await response.json()) as {
-    places?: Array<{ "state abbreviation"?: string }>;
-  };
-
-  const state = data?.places?.[0]?.["state abbreviation"]?.toUpperCase() || "";
-
-  if (!state || state.length !== 2) {
-    return { ok: false, message: "Could not determine the shipping state from that ZIP." };
-  }
-
-  return { ok: true, state, zip };
-}
-
-function getShippingPriceFromState(state: string, quantity: number, zip: string): ShippingResult {
-  if (ZONE_1.has(state)) {
-    if (quantity >= 8) {
-      return { ok: true, state, quantity, zone: "Zone 1", amount: 1200, zip };
-    }
-    return {
-      ok: true,
-      state,
-      quantity,
-      zone: "Zone 1",
-      amount: 200 + Math.max(0, quantity - 1) * 150,
-      zip,
-    };
-  }
-
-  if (ZONE_2.has(state)) {
-    if (quantity >= 8) {
-      return { ok: true, state, quantity, zone: "Zone 2", amount: 1400, zip };
-    }
-    return {
-      ok: true,
-      state,
-      quantity,
-      zone: "Zone 2",
-      amount: 300 + Math.max(0, quantity - 1) * 150,
-      zip,
-    };
-  }
-
-  if (ZONE_3.has(state)) {
-    if (quantity >= 8) {
-      return { ok: true, state, quantity, zone: "Zone 3", amount: 1800, zip };
-    }
-    return {
-      ok: true,
-      state,
-      quantity,
-      zone: "Zone 3",
-      amount: 400 + Math.max(0, quantity - 1) * 100,
-      zip,
-    };
-  }
-
-  if (ZONE_4.has(state)) {
-    if (quantity >= 8) {
-      return { ok: true, state, quantity, zone: "Zone 4", amount: 2000, zip };
-    }
-    return {
-      ok: true,
-      state,
-      quantity,
-      zone: "Zone 4",
-      amount: 600 + Math.max(0, quantity - 1) * 80,
-      zip,
-    };
-  }
-
-  return {
-    ok: false,
-    message: `Shipping for ${state} is not in the current table yet.`,
-  };
 }
 
 function calculateSeal(payload: Payload): CalcResult {
@@ -811,118 +807,6 @@ function calculateSeal(payload: Payload): CalcResult {
   };
 }
 
-function buildEmailHtml(args: {
-  controlNumber: string;
-  payload: Payload;
-  calc: Exclude<CalcResult, { ok: false }>;
-  shipping: Exclude<ShippingResult, { ok: false }>;
-  quantity: number;
-  sealSubtotal: number;
-  grandTotal: number;
-  title: string;
-  invoiceUrl: string;
-  draftOrderName: string;
-}) {
-  const { controlNumber, payload, calc, shipping, quantity, sealSubtotal, grandTotal, title, invoiceUrl, draftOrderName } = args;
-
-  const enteredRows = [
-    ["A", payload.a], ["B", payload.b], ["C", payload.c], ["D", payload.d],
-    ["E", payload.e], ["F", payload.f], ["G", payload.g], ["H", payload.h],
-    ["I", payload.i], ["J", payload.j], ["K", payload.k], ["L", payload.l],
-    ["M", payload.m], ["N", payload.n], ["O", payload.o], ["P", payload.p],
-    ["Q", payload.q], ["R", calc.footerMaterialDisplay], ["S", calc.wallTypeDisplay],
-    ["Quantity", String(quantity)], ["Shipping ZIP", shipping.zip], ["Shipping State", shipping.state],
-  ];
-
-  const calculatedRows = [
-    ["Control Number", controlNumber],
-    ["Draft Order", draftOrderName],
-    ["Item Title", title],
-    ["Series", calc.series],
-    ["Projection", `${calc.projection}"`],
-    ["Top Projection", `${calc.topProjection}"`],
-    ["Bevel", calc.selectedBevelCode],
-    ["Overall Face Footprint", `${calc.overallFaceFootprint}"`],
-    ["Wall Back Footprint", `${calc.wallBackFootprint}"`],
-    ["Offset Each Side", `${calc.offsetEachSide}"`],
-    ["Required Clearance Each Side", `${calc.requiredClearanceEachSide}"`],
-    ["Bottom Wall to Truck Distance", `${calc.bottomWallToTruckDistance}"`],
-    ["Top Wall to Truck Distance", `${calc.topWallToTruckDistance.toFixed(2)}"`],
-    ["Required Top Wall to Truck Min", `${calc.requiredTopWallToTruckMin}"`],
-    ["Siding Reduction", `${calc.sidingReduction}"`],
-    ["Blockout Thickness Used", `${calc.blockoutThicknessUsed}"`],
-    ["Backing Type", calc.backingType],
-    ["Side Pad Height", `${calc.sidePadHeight}"`],
-    ["Required Top Clearance", `${calc.requiredTopClearance}"`],
-    ["Calculated Top Clearance", `${calc.calculatedTopClearance}"`],
-    ["Opening Top From Drive", `${calc.openingTopFromDrive}"`],
-    ["Slope Percent", `${calc.slopePercent.toFixed(2)}%`],
-    ["Head Pad Height", `${calc.headPadHeight}"`],
-    ["Drop Curtain", `${calc.dropCurtain}"`],
-    ["Head Curtain Length", `${calc.headCurtainLength}"`],
-    ["Split Curtain", `${calc.splitCurtain}"`],
-    ["Front Top Of Assembly", calc.frontTopOfAssembly ? `${calc.frontTopOfAssembly}"` : "—"],
-    ["Back Top Of Assembly", calc.backTopOfAssembly ? `${calc.backTopOfAssembly}"` : "—"],
-    ["Base Sales Price", dollars(calc.baseSalesPrice)],
-    ["Bevel Adder", dollars(calc.bevelAdder)],
-    ["Pleat Adder", dollars(calc.pleatAdder)],
-    ["Head Pad Height Adder", dollars(calc.headPadHeightAdder)],
-    ["Drop Curtain Adder", dollars(calc.dropCurtainAdder)],
-    ["Head Cap Adder", dollars(calc.headCapAdder)],
-    ["Head Curtain Adder", dollars(calc.headCurtainAdder)],
-    ["Steel Back Adder", dollars(calc.steelBackAdder)],
-    ["Blockout Adder", dollars(calc.blockoutAdder)],
-    ["Per Seal Price", dollars(calc.totalEstimatedPrice)],
-    ["Seal Subtotal", dollars(sealSubtotal)],
-    ["Shipping Zone", shipping.zone],
-    ["Shipping Charge", dollars(shipping.amount)],
-    ["Grand Total", dollars(grandTotal)],
-  ];
-
-  const renderRows = (rows: Array<[string, string]>) =>
-    rows
-      .map(
-        ([label, value]) =>
-          `<tr><td style="padding:6px 10px;border:1px solid #ddd;font-weight:600;">${escapeHtml(label)}</td><td style="padding:6px 10px;border:1px solid #ddd;">${escapeHtml(value)}</td></tr>`,
-      )
-      .join("");
-
-  const notesHtml = calc.notes.map((note) => `<li>${escapeHtml(note)}</li>`).join("");
-
-  return `
-    <div style="font-family:Arial,sans-serif;color:#111;">
-      <h2 style="margin-bottom:8px;">Dock Seal Submission</h2>
-      <p><strong>Control Number:</strong> ${escapeHtml(controlNumber)}</p>
-      <p><strong>Draft Order:</strong> ${escapeHtml(draftOrderName)}</p>
-      <p><strong>Invoice URL:</strong> <a href="${escapeHtml(invoiceUrl)}">${escapeHtml(invoiceUrl)}</a></p>
-
-      <h3>Entered Inputs</h3>
-      <table style="border-collapse:collapse;width:100%;max-width:900px;">
-        ${renderRows(enteredRows)}
-      </table>
-
-      <h3 style="margin-top:24px;">Calculated Configuration</h3>
-      <table style="border-collapse:collapse;width:100%;max-width:900px;">
-        ${renderRows(calculatedRows)}
-      </table>
-
-      <h3 style="margin-top:24px;">Notes / Options</h3>
-      <ul>${notesHtml}</ul>
-
-      ${
-        calc.backingNote
-          ? `<p><strong>Backing Note:</strong> ${escapeHtml(calc.backingNote)}</p>`
-          : ""
-      }
-      ${
-        calc.truckTypeNote
-          ? `<p><strong>Truck Type Note:</strong> ${escapeHtml(calc.truckTypeNote)}</p>`
-          : ""
-      }
-    </div>
-  `;
-}
-
 export async function loader({ request }: LoaderFunctionArgs) {
   await authenticate.public.appProxy(request);
 
@@ -980,18 +864,7 @@ export async function action({ request }: ActionFunctionArgs) {
     return json({ ok: false, message: calc.message }, { status: 400 });
   }
 
-  const zipLookup = await lookupStateFromZip(payload.ship_zip);
-  if (!zipLookup.ok) {
-    return json({ ok: false, message: zipLookup.message }, { status: 400 });
-  }
-
-  const shipping = {
-    state: zipLookup.state,
-    zip: zipLookup.zip,
-  };
-
   const sealSubtotal = calc.totalEstimatedPrice * quantity;
-  const grandTotal = sealSubtotal;
   const controlNumber = generateControlNumber();
 
   const mutation = `#graphql
@@ -1020,77 +893,19 @@ export async function action({ request }: ActionFunctionArgs) {
       ? "gid://shopify/ProductVariant/48194762735864"
       : "gid://shopify/ProductVariant/48194762768632";
 
-  const noteLines = [
-    "Dock seal generated from configurator",
-    `Control Number: ${controlNumber}`,
-    `Draft Order Item: ${title}`,
-    `Series: ${calc.series}`,
-    `Quantity: ${quantity}`,
-    `Unit Price: ${dollars(calc.totalEstimatedPrice)}`,
-    `Seal Subtotal: ${dollars(sealSubtotal)}`,
-    `Shipping ZIP: ${shipping.zip}`,
-    `Shipping State: ${shipping.state}`,
-    `A: ${payload.a}`,
-    `B: ${payload.b}`,
-    `C: ${payload.c}`,
-    `D: ${payload.d}`,
-    `E: ${payload.e}`,
-    `F: ${payload.f}`,
-    `G: ${payload.g}`,
-    `H: ${payload.h}`,
-    `I: ${payload.i}`,
-    `J: ${payload.j}`,
-    `K: ${payload.k}`,
-    `L: ${payload.l}`,
-    `M: ${payload.m}`,
-    `N: ${payload.n}`,
-    `O: ${payload.o}`,
-    `P: ${payload.p}`,
-    `Q: ${payload.q}`,
-    `R: ${calc.footerMaterialDisplay}`,
-    `S: ${calc.wallTypeDisplay}`,
-    `Projection: ${calc.projection}"`,
-    `Top Projection: ${calc.topProjection}"`,
-    `Bevel: ${calc.selectedBevelCode}`,
-    `Overall Face Footprint: ${calc.overallFaceFootprint}"`,
-    `Wall Back Footprint: ${calc.wallBackFootprint}"`,
-    `Offset Each Side: ${calc.offsetEachSide}"`,
-    `Required Clearance Each Side: ${calc.requiredClearanceEachSide}"`,
-    `Bottom Wall to Truck Distance: ${calc.bottomWallToTruckDistance}"`,
-    `Top Wall to Truck Distance: ${calc.topWallToTruckDistance.toFixed(2)}"`,
-    `Required Top Wall to Truck Min: ${calc.requiredTopWallToTruckMin}"`,
-    `Siding Reduction: ${calc.sidingReduction}"`,
-    `Blockout Thickness Used: ${calc.blockoutThicknessUsed}"`,
-    `Backing Type: ${calc.backingType}`,
-    `Side Pad Height: ${calc.sidePadHeight}"`,
-    `Required Top Clearance: ${calc.requiredTopClearance}"`,
-    `Calculated Top Clearance: ${calc.calculatedTopClearance}"`,
-    `Opening Top From Drive: ${calc.openingTopFromDrive}"`,
-    `Slope Percent: ${calc.slopePercent.toFixed(2)}%`,
-    `Head Pad Height: ${calc.headPadHeight}"`,
-    `Drop Curtain: ${calc.dropCurtain}"`,
-    `Head Curtain Length: ${calc.headCurtainLength}"`,
-    `Split Curtain: ${calc.splitCurtain}"`,
-    `Front Top Of Assembly: ${calc.frontTopOfAssembly ? `${calc.frontTopOfAssembly}"` : "—"}`,
-    `Back Top Of Assembly: ${calc.backTopOfAssembly ? `${calc.backTopOfAssembly}"` : "—"}`,
-    `Base Sales Price: ${dollars(calc.baseSalesPrice)}`,
-    `Bevel Adder: ${dollars(calc.bevelAdder)}`,
-    `Pleat Adder: ${dollars(calc.pleatAdder)}`,
-    `Head Pad Height Adder: ${dollars(calc.headPadHeightAdder)}`,
-    `Drop Curtain Adder: ${dollars(calc.dropCurtainAdder)}`,
-    `Head Cap Adder: ${dollars(calc.headCapAdder)}`,
-    `Head Curtain Adder: ${dollars(calc.headCurtainAdder)}`,
-    `Steel Back Adder: ${dollars(calc.steelBackAdder)}`,
-    `Blockout Adder: ${dollars(calc.blockoutAdder)}`,
-    calc.backingNote ? `Backing Note: ${calc.backingNote}` : "",
-    calc.truckTypeNote ? `Truck Type Note: ${calc.truckTypeNote}` : "",
-    `Options: ${calc.notes.join(", ")}`,
-  ].filter(Boolean);
+  const itemDetails = buildCheckoutItemDetails(payload, calc, controlNumber);
+  const flowNote = buildFlowNote({
+    controlNumber,
+    payload,
+    calc,
+    quantity,
+    sealSubtotal,
+    title,
+  });
 
   const variables = {
     input: {
-      note: noteLines.join("
-"),
+      note: flowNote,
       tags: ["dock-seal-config"],
       lineItems: [
         {
@@ -1100,6 +915,9 @@ export async function action({ request }: ActionFunctionArgs) {
             amount: String(calc.totalEstimatedPrice),
             currencyCode: "USD",
           },
+          customAttributes: [
+            { key: "Details", value: itemDetails },
+          ],
         },
       ],
     },
