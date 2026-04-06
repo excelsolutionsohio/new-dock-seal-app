@@ -1478,4 +1478,3 @@ console.log("=== DOCK SEAL EMAIL BLOCK END ===", {
     emailSent,
     emailWarning,
   });
-}
