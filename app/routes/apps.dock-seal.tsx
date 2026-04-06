@@ -1111,6 +1111,11 @@ export async function action({ request }: ActionFunctionArgs) {
       ? "Dock Seal with Head Pad"
       : "Dock Seal with Head Cap";
 
+  const selectedVariantId =
+    calc.series === "1000"
+      ? "gid://shopify/ProductVariant/48194762735864"
+      : "gid://shopify/ProductVariant/48194762768632";
+
   const noteLines = [
     "Dock seal generated from configurator",
     `Control Number: ${controlNumber}`,
@@ -1137,17 +1142,17 @@ export async function action({ request }: ActionFunctionArgs) {
 
   const variables = {
     input: {
-      note: noteLines.join("\n"),
+      note: noteLines.join("
+"),
       tags: ["dock-seal-config"],
       lineItems: [
         {
-          title,
-          quantity: 1,
-          originalUnitPriceWithCurrency: {
-            amount: grandTotal,
+          variantId: selectedVariantId,
+          quantity: quantity,
+          priceOverride: {
+            amount: String(calc.totalEstimatedPrice),
             currencyCode: "USD",
           },
-          taxable: false,
           customAttributes: [
             { key: "Control Number", value: controlNumber },
             { key: "A", value: payload.a },
@@ -1186,6 +1191,16 @@ export async function action({ request }: ActionFunctionArgs) {
             { key: "Grand Total", value: String(grandTotal) },
           ],
         },
+        {
+          title: "Freight",
+          quantity: 1,
+          originalUnitPriceWithCurrency: {
+            amount: String(shipping.amount),
+            currencyCode: "USD",
+          },
+          taxable: false,
+          requiresShipping: false,
+        },
       ],
     },
   };
@@ -1209,12 +1224,20 @@ export async function action({ request }: ActionFunctionArgs) {
   const invoiceUrl = data.draftOrder.invoiceUrl as string;
   const draftOrderName = data.draftOrder.name as string;
 
+  console.log("=== DOCK SEAL EMAIL BLOCK START ===");
   const resendApiKey = process.env.RESEND_API_KEY;
   const configEmailTo = process.env.CONFIG_EMAIL_TO;
   const configEmailFrom = process.env.CONFIG_EMAIL_FROM;
 
   let emailSent = false;
   let emailWarning = "";
+
+  console.log("Resend env check:", {
+    hasApiKey: Boolean(resendApiKey),
+    hasTo: Boolean(configEmailTo),
+    hasFrom: Boolean(configEmailFrom),
+    controlNumber,
+  });
 
   if (resendApiKey && configEmailTo && configEmailFrom) {
     try {
@@ -1231,27 +1254,58 @@ export async function action({ request }: ActionFunctionArgs) {
         invoiceUrl,
         draftOrderName,
       });
+      const text = buildEmailText({
+        controlNumber,
+        payload,
+        calc,
+        shipping,
+        quantity,
+        sealSubtotal,
+        grandTotal,
+        title,
+        invoiceUrl,
+        draftOrderName,
+      });
+
+      console.log("Attempting Resend send for control number:", controlNumber);
 
       const emailResult = await resend.emails.send({
         from: configEmailFrom,
         to: [configEmailTo],
         subject: `Dock Seal Submission ${controlNumber}`,
         html,
+        text,
       });
+
+      console.log("Raw Resend response:", JSON.stringify(emailResult));
 
       if (emailResult.error) {
         emailWarning = emailResult.error.message || "Submission email failed to send.";
+        console.error("Resend error:", emailResult.error);
       } else {
         emailSent = true;
+        console.log("Resend email sent successfully");
       }
     } catch (error) {
       emailWarning =
         error instanceof Error ? error.message : "Submission email failed to send.";
+      console.error("Resend exception:", error);
     }
   } else {
     emailWarning =
       "Submission email was skipped because RESEND_API_KEY, CONFIG_EMAIL_TO, or CONFIG_EMAIL_FROM is missing.";
+    console.error("Resend skipped:", {
+      hasApiKey: Boolean(resendApiKey),
+      hasTo: Boolean(configEmailTo),
+      hasFrom: Boolean(configEmailFrom),
+    });
   }
+
+  console.log("=== DOCK SEAL EMAIL BLOCK END ===", {
+    emailSent,
+    emailWarning,
+    controlNumber,
+  });
 
   return json({
     ok: true,
@@ -1265,5 +1319,3 @@ export async function action({ request }: ActionFunctionArgs) {
     emailWarning,
   });
 }
-
-// EMAIL DEBUG PATCH FAILED TO AUTO-MERGE
