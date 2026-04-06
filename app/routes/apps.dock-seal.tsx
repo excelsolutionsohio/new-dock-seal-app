@@ -1,7 +1,6 @@
 import { json } from "@remix-run/node";
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 import { authenticate } from "../shopify.server";
-import { Resend } from "resend";
 
 type Payload = {
   a: string;
@@ -924,100 +923,6 @@ function buildEmailHtml(args: {
   `;
 }
 
-
-
-function buildEmailText(args: {
-  controlNumber: string;
-  payload: Payload;
-  calc: Exclude<CalcResult, { ok: false }>;
-  shipping: Exclude<ShippingResult, { ok: false }>;
-  quantity: number;
-  sealSubtotal: number;
-  grandTotal: number;
-  title: string;
-  invoiceUrl: string;
-  draftOrderName: string;
-}) {
-  const { controlNumber, payload, calc, shipping, quantity, sealSubtotal, grandTotal, title, invoiceUrl, draftOrderName } = args;
-
-  return [
-    `Dock Seal Submission`,
-    `Control Number: ${controlNumber}`,
-    `Draft Order: ${draftOrderName}`,
-    `Invoice URL: ${invoiceUrl}`,
-    ``,
-    `Entered Inputs`,
-    `A: ${payload.a}`,
-    `B: ${payload.b}`,
-    `C: ${payload.c}`,
-    `D: ${payload.d}`,
-    `E: ${payload.e}`,
-    `F: ${payload.f}`,
-    `G: ${payload.g}`,
-    `H: ${payload.h}`,
-    `I: ${payload.i}`,
-    `J: ${payload.j}`,
-    `K: ${payload.k}`,
-    `L: ${payload.l}`,
-    `M: ${payload.m}`,
-    `N: ${payload.n}`,
-    `O: ${payload.o}`,
-    `P: ${payload.p}`,
-    `Q: ${payload.q}`,
-    `R: ${calc.footerMaterialDisplay}`,
-    `S: ${calc.wallTypeDisplay}`,
-    `Quantity: ${quantity}`,
-    `Shipping ZIP: ${shipping.zip}`,
-    `Shipping State: ${shipping.state}`,
-    ``,
-    `Calculated Configuration`,
-    `Item Title: ${title}`,
-    `Series: ${calc.series}`,
-    `Projection: ${calc.projection}"`,
-    `Top Projection: ${calc.topProjection}"`,
-    `Bevel: ${calc.selectedBevelCode}`,
-    `Overall Face Footprint: ${calc.overallFaceFootprint}"`,
-    `Wall Back Footprint: ${calc.wallBackFootprint}"`,
-    `Offset Each Side: ${calc.offsetEachSide}"`,
-    `Required Clearance Each Side: ${calc.requiredClearanceEachSide}"`,
-    `Bottom Wall to Truck Distance: ${calc.bottomWallToTruckDistance}"`,
-    `Top Wall to Truck Distance: ${calc.topWallToTruckDistance.toFixed(2)}"`,
-    `Required Top Wall to Truck Min: ${calc.requiredTopWallToTruckMin}"`,
-    `Siding Reduction: ${calc.sidingReduction}"`,
-    `Blockout Thickness Used: ${calc.blockoutThicknessUsed}"`,
-    `Backing Type: ${calc.backingType}`,
-    `Side Pad Height: ${calc.sidePadHeight}"`,
-    `Required Top Clearance: ${calc.requiredTopClearance}"`,
-    `Calculated Top Clearance: ${calc.calculatedTopClearance}"`,
-    `Opening Top From Drive: ${calc.openingTopFromDrive}"`,
-    `Slope Percent: ${calc.slopePercent.toFixed(2)}%`,
-    `Head Pad Height: ${calc.headPadHeight}"`,
-    `Drop Curtain: ${calc.dropCurtain}"`,
-    `Head Curtain Length: ${calc.headCurtainLength}"`,
-    `Split Curtain: ${calc.splitCurtain}"`,
-    `Front Top Of Assembly: ${calc.frontTopOfAssembly ? `${calc.frontTopOfAssembly}"` : "—"}`,
-    `Back Top Of Assembly: ${calc.backTopOfAssembly ? `${calc.backTopOfAssembly}"` : "—"}`,
-    `Base Sales Price: ${dollars(calc.baseSalesPrice)}`,
-    `Bevel Adder: ${dollars(calc.bevelAdder)}`,
-    `Pleat Adder: ${dollars(calc.pleatAdder)}`,
-    `Head Pad Height Adder: ${dollars(calc.headPadHeightAdder)}`,
-    `Drop Curtain Adder: ${dollars(calc.dropCurtainAdder)}`,
-    `Head Cap Adder: ${dollars(calc.headCapAdder)}`,
-    `Head Curtain Adder: ${dollars(calc.headCurtainAdder)}`,
-    `Steel Back Adder: ${dollars(calc.steelBackAdder)}`,
-    `Blockout Adder: ${dollars(calc.blockoutAdder)}`,
-    `Per Seal Price: ${dollars(calc.totalEstimatedPrice)}`,
-    `Seal Subtotal: ${dollars(sealSubtotal)}`,
-    `Shipping Mode: ${shipping.zone}`,
-    `Grand Total: ${dollars(grandTotal)}`,
-    ``,
-    `Notes / Options`,
-    ...calc.notes.map((note) => `- ${note}`),
-    calc.backingNote ? `Backing Note: ${calc.backingNote}` : "",
-    calc.truckTypeNote ? `Truck Type Note: ${calc.truckTypeNote}` : "",
-  ].filter(Boolean).join(`\n`);
-}
-
 export async function loader({ request }: LoaderFunctionArgs) {
   await authenticate.public.appProxy(request);
 
@@ -1080,12 +985,8 @@ export async function action({ request }: ActionFunctionArgs) {
     return json({ ok: false, message: zipLookup.message }, { status: 400 });
   }
 
-  const shipping: Exclude<ShippingResult, { ok: false }> = {
-    ok: true,
+  const shipping = {
     state: zipLookup.state,
-    quantity,
-    zone: "Native Shopify Shipping",
-    amount: 0,
     zip: zipLookup.zip,
   };
 
@@ -1109,81 +1010,100 @@ export async function action({ request }: ActionFunctionArgs) {
     }
   `;
 
+  const title =
+    calc.series === "1000"
+      ? "Dock Seal with Head Pad"
+      : "Dock Seal with Head Cap";
 
-const title =
-  calc.series === "1000"
-    ? "Dock Seal with Head Pad"
-    : "Dock Seal with Head Cap";
+  const selectedVariantId =
+    calc.series === "1000"
+      ? "gid://shopify/ProductVariant/48194762735864"
+      : "gid://shopify/ProductVariant/48194762768632";
 
-const selectedVariantId =
-  calc.series === "1000"
-    ? "gid://shopify/ProductVariant/48194762735864"
-    : "gid://shopify/ProductVariant/48194762768632";
+  const noteLines = [
+    "Dock seal generated from configurator",
+    `Control Number: ${controlNumber}`,
+    `Draft Order Item: ${title}`,
+    `Series: ${calc.series}`,
+    `Quantity: ${quantity}`,
+    `Unit Price: ${dollars(calc.totalEstimatedPrice)}`,
+    `Seal Subtotal: ${dollars(sealSubtotal)}`,
+    `Shipping ZIP: ${shipping.zip}`,
+    `Shipping State: ${shipping.state}`,
+    `A: ${payload.a}`,
+    `B: ${payload.b}`,
+    `C: ${payload.c}`,
+    `D: ${payload.d}`,
+    `E: ${payload.e}`,
+    `F: ${payload.f}`,
+    `G: ${payload.g}`,
+    `H: ${payload.h}`,
+    `I: ${payload.i}`,
+    `J: ${payload.j}`,
+    `K: ${payload.k}`,
+    `L: ${payload.l}`,
+    `M: ${payload.m}`,
+    `N: ${payload.n}`,
+    `O: ${payload.o}`,
+    `P: ${payload.p}`,
+    `Q: ${payload.q}`,
+    `R: ${calc.footerMaterialDisplay}`,
+    `S: ${calc.wallTypeDisplay}`,
+    `Projection: ${calc.projection}"`,
+    `Top Projection: ${calc.topProjection}"`,
+    `Bevel: ${calc.selectedBevelCode}`,
+    `Overall Face Footprint: ${calc.overallFaceFootprint}"`,
+    `Wall Back Footprint: ${calc.wallBackFootprint}"`,
+    `Offset Each Side: ${calc.offsetEachSide}"`,
+    `Required Clearance Each Side: ${calc.requiredClearanceEachSide}"`,
+    `Bottom Wall to Truck Distance: ${calc.bottomWallToTruckDistance}"`,
+    `Top Wall to Truck Distance: ${calc.topWallToTruckDistance.toFixed(2)}"`,
+    `Required Top Wall to Truck Min: ${calc.requiredTopWallToTruckMin}"`,
+    `Siding Reduction: ${calc.sidingReduction}"`,
+    `Blockout Thickness Used: ${calc.blockoutThicknessUsed}"`,
+    `Backing Type: ${calc.backingType}`,
+    `Side Pad Height: ${calc.sidePadHeight}"`,
+    `Required Top Clearance: ${calc.requiredTopClearance}"`,
+    `Calculated Top Clearance: ${calc.calculatedTopClearance}"`,
+    `Opening Top From Drive: ${calc.openingTopFromDrive}"`,
+    `Slope Percent: ${calc.slopePercent.toFixed(2)}%`,
+    `Head Pad Height: ${calc.headPadHeight}"`,
+    `Drop Curtain: ${calc.dropCurtain}"`,
+    `Head Curtain Length: ${calc.headCurtainLength}"`,
+    `Split Curtain: ${calc.splitCurtain}"`,
+    `Front Top Of Assembly: ${calc.frontTopOfAssembly ? `${calc.frontTopOfAssembly}"` : "—"}`,
+    `Back Top Of Assembly: ${calc.backTopOfAssembly ? `${calc.backTopOfAssembly}"` : "—"}`,
+    `Base Sales Price: ${dollars(calc.baseSalesPrice)}`,
+    `Bevel Adder: ${dollars(calc.bevelAdder)}`,
+    `Pleat Adder: ${dollars(calc.pleatAdder)}`,
+    `Head Pad Height Adder: ${dollars(calc.headPadHeightAdder)}`,
+    `Drop Curtain Adder: ${dollars(calc.dropCurtainAdder)}`,
+    `Head Cap Adder: ${dollars(calc.headCapAdder)}`,
+    `Head Curtain Adder: ${dollars(calc.headCurtainAdder)}`,
+    `Steel Back Adder: ${dollars(calc.steelBackAdder)}`,
+    `Blockout Adder: ${dollars(calc.blockoutAdder)}`,
+    calc.backingNote ? `Backing Note: ${calc.backingNote}` : "",
+    calc.truckTypeNote ? `Truck Type Note: ${calc.truckTypeNote}` : "",
+    `Options: ${calc.notes.join(", ")}`,
+  ].filter(Boolean);
 
-const itemDetails =
-  `(A ${payload.a})` +
-  `(B ${payload.b})` +
-  `(C ${payload.c})` +
-  `(D ${payload.d})` +
-  `(E ${payload.e})` +
-  `(F ${payload.f})` +
-  `(G ${payload.g})` +
-  `(H ${payload.h})` +
-  `(I ${payload.i})` +
-  `(J ${payload.j})` +
-  `(K ${payload.k})` +
-  `(L ${payload.l})` +
-  `(M ${payload.m})` +
-  `(N ${payload.n})` +
-  `(O ${payload.o})` +
-  `(P ${payload.p})` +
-  `(Q ${payload.q})` +
-  `(R ${calc.footerMaterialDisplay})` +
-  `(S ${calc.wallTypeDisplay})` +
-  `(Unit Price ${dollars(calc.totalEstimatedPrice)})` +
-  `(Control # ${controlNumber})`;
-
-const noteLines = [
-  "Dock seal generated from configurator",
-  `Control Number: ${controlNumber}`,
-  `Series: ${calc.series}`,
-  `Quantity: ${quantity}`,
-  `Per Seal Price: ${dollars(calc.totalEstimatedPrice)}`,
-  `Seal Subtotal: ${dollars(sealSubtotal)}`,
-  `Shipping ZIP: ${shipping.zip}`,
-  `Shipping State: ${shipping.state}`,
-  `Shipping Mode: ${shipping.zone}`,
-  `Projection: ${calc.projection}"`,
-  `Top Projection: ${calc.topProjection}"`,
-  `Bevel: ${calc.selectedBevelCode}`,
-  `Overall Face Footprint: ${calc.overallFaceFootprint}"`,
-  `Backing Type: ${calc.backingType}`,
-  `Footer Material: ${calc.footerMaterialDisplay}`,
-  `Wall Type: ${calc.wallTypeDisplay}`,
-  calc.backingNote ? `Backing Note: ${calc.backingNote}` : "",
-  calc.truckTypeNote ? `Truck Type Note: ${calc.truckTypeNote}` : "",
-  `Options: ${calc.notes.join(", ")}`,
-].filter(Boolean);
-
-const variables = {
-  input: {
-    note: noteLines.join("\n"),
-    tags: ["dock-seal-config"],
-    lineItems: [
-      {
-        variantId: selectedVariantId,
-        quantity: quantity,
-        priceOverride: {
-          amount: String(calc.totalEstimatedPrice),
-          currencyCode: "USD",
+  const variables = {
+    input: {
+      note: noteLines.join("
+"),
+      tags: ["dock-seal-config"],
+      lineItems: [
+        {
+          variantId: selectedVariantId,
+          quantity: quantity,
+          priceOverride: {
+            amount: String(calc.totalEstimatedPrice),
+            currencyCode: "USD",
+          },
         },
-        customAttributes: [
-          { key: "Details", value: itemDetails },
-        ],
-      },
-    ],
-  },
-};
+      ],
+    },
+  };
 
   const response = await admin.graphql(mutation, { variables });
   const responseJson = await response.json();
@@ -1204,95 +1124,6 @@ const variables = {
   const invoiceUrl = data.draftOrder.invoiceUrl as string;
   const draftOrderName = data.draftOrder.name as string;
 
-
-  console.log("=== DOCK SEAL EMAIL BLOCK START ===");
-  const resendApiKey = process.env.RESEND_API_KEY;
-  const configEmailTo = process.env.CONFIG_EMAIL_TO;
-  const configEmailFrom = process.env.CONFIG_EMAIL_FROM;
-
-  let emailSent = false;
-  let emailWarning = "";
-
-  console.log("Resend env check:", {
-    hasApiKey: Boolean(resendApiKey),
-    hasTo: Boolean(configEmailTo),
-    hasFrom: Boolean(configEmailFrom),
-    controlNumber,
-  });
-
-  if (resendApiKey && configEmailTo && configEmailFrom) {
-    try {
-      const resend = new Resend(resendApiKey);
-
-      const apiKeyListResult = await resend.apiKeys.list();
-      console.log("Resend apiKeys.list response:", JSON.stringify(apiKeyListResult));
-
-      const html = buildEmailHtml({
-        controlNumber,
-        payload,
-        calc,
-        shipping,
-        quantity,
-        sealSubtotal,
-        grandTotal,
-        title,
-        invoiceUrl,
-        draftOrderName,
-      });
-
-      const text = buildEmailText({
-        controlNumber,
-        payload,
-        calc,
-        shipping,
-        quantity,
-        sealSubtotal,
-        grandTotal,
-        title,
-        invoiceUrl,
-        draftOrderName,
-      });
-
-      console.log("Attempting Resend send for control number:", controlNumber);
-
-      const emailResult = await resend.emails.send({
-        from: configEmailFrom,
-        to: [configEmailTo],
-        subject: `Dock Seal Submission ${controlNumber}`,
-        html,
-        text,
-      });
-
-      console.log("Raw Resend response:", JSON.stringify(emailResult));
-
-      if (emailResult.error) {
-        emailWarning = emailResult.error.message || "Submission email failed to send.";
-        console.error("Resend error:", emailResult.error);
-      } else {
-        emailSent = true;
-        console.log("Resend email sent successfully");
-      }
-    } catch (error) {
-      emailWarning =
-        error instanceof Error ? error.message : "Submission email failed to send.";
-      console.error("Resend exception:", error);
-    }
-  } else {
-    emailWarning =
-      "Submission email was skipped because RESEND_API_KEY, CONFIG_EMAIL_TO, or CONFIG_EMAIL_FROM is missing.";
-    console.error("Resend skipped:", {
-      hasApiKey: Boolean(resendApiKey),
-      hasTo: Boolean(configEmailTo),
-      hasFrom: Boolean(configEmailFrom),
-    });
-  }
-
-  console.log("=== DOCK SEAL EMAIL BLOCK END ===", {
-    emailSent,
-    emailWarning,
-    controlNumber,
-  });
-
   return json({
     ok: true,
     message: "DRAFT ORDER CREATED",
@@ -1301,7 +1132,5 @@ const variables = {
     invoiceUrl,
     name: draftOrderName,
     controlNumber,
-    emailSent,
-    emailWarning,
   });
 }
