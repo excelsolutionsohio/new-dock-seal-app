@@ -816,15 +816,13 @@ function buildEmailHtml(args: {
   controlNumber: string;
   payload: Payload;
   calc: Exclude<CalcResult, { ok: false }>;
-  shipping: Exclude<ShippingResult, { ok: false }>;
   quantity: number;
   sealSubtotal: number;
-  grandTotal: number;
   title: string;
   invoiceUrl: string;
   draftOrderName: string;
 }) {
-  const { controlNumber, payload, calc, shipping, quantity, sealSubtotal, grandTotal, title, invoiceUrl, draftOrderName } = args;
+  const { controlNumber, payload, calc, quantity, sealSubtotal, title, invoiceUrl, draftOrderName } = args;
 
   const enteredRows = [
     ["A", payload.a], ["B", payload.b], ["C", payload.c], ["D", payload.d],
@@ -832,7 +830,7 @@ function buildEmailHtml(args: {
     ["I", payload.i], ["J", payload.j], ["K", payload.k], ["L", payload.l],
     ["M", payload.m], ["N", payload.n], ["O", payload.o], ["P", payload.p],
     ["Q", payload.q], ["R", calc.footerMaterialDisplay], ["S", calc.wallTypeDisplay],
-    ["Quantity", String(quantity)], ["Shipping ZIP", shipping.zip], ["Shipping State", shipping.state],
+    ["Quantity", String(quantity)], ["Shipping ZIP", payload.ship_zip],
   ];
 
   const calculatedRows = [
@@ -875,9 +873,6 @@ function buildEmailHtml(args: {
     ["Blockout Adder", dollars(calc.blockoutAdder)],
     ["Per Seal Price", dollars(calc.totalEstimatedPrice)],
     ["Seal Subtotal", dollars(sealSubtotal)],
-    ["Shipping Zone", shipping.zone],
-    ["Shipping Charge", dollars(shipping.amount)],
-    ["Grand Total", dollars(grandTotal)],
   ];
 
   const renderRows = (rows: Array<[string, string]>) =>
@@ -981,18 +976,7 @@ export async function action({ request }: ActionFunctionArgs) {
     return json({ ok: false, message: calc.message }, { status: 400 });
   }
 
-  const zipLookup = await lookupStateFromZip(payload.ship_zip);
-  if (!zipLookup.ok) {
-    return json({ ok: false, message: zipLookup.message }, { status: 400 });
-  }
-
-  const shipping = getShippingPriceFromState(zipLookup.state, quantity, zipLookup.zip);
-  if (!shipping.ok) {
-    return json({ ok: false, message: shipping.message }, { status: 400 });
-  }
-
   const sealSubtotal = calc.totalEstimatedPrice * quantity;
-  const grandTotal = sealSubtotal + shipping.amount;
   const controlNumber = generateControlNumber();
 
   const mutation = `#graphql
@@ -1016,11 +1000,6 @@ export async function action({ request }: ActionFunctionArgs) {
       ? "Dock Seal with Head Pad"
       : "Dock Seal with Head Cap";
 
-  const selectedVariantId =
-    calc.series === "1000"
-      ? "gid://shopify/ProductVariant/48194762735864"
-      : "gid://shopify/ProductVariant/48194762768632";
-
   const noteLines = [
     "Dock seal generated from configurator",
     `Control Number: ${controlNumber}`,
@@ -1028,11 +1007,7 @@ export async function action({ request }: ActionFunctionArgs) {
     `Quantity: ${quantity}`,
     `Per Seal Price: ${dollars(calc.totalEstimatedPrice)}`,
     `Seal Subtotal: ${dollars(sealSubtotal)}`,
-    `Shipping ZIP: ${shipping.zip}`,
-    `Shipping State: ${shipping.state}`,
-    `Shipping Zone: ${shipping.zone}`,
-    `Shipping Charge: ${dollars(shipping.amount)}`,
-    `Grand Total: ${dollars(grandTotal)}`,
+    `Shipping ZIP: ${payload.ship_zip}`,
     `Projection: ${calc.projection}"`,
     `Top Projection: ${calc.topProjection}"`,
     `Bevel: ${calc.selectedBevelCode}`,
@@ -1051,13 +1026,15 @@ export async function action({ request }: ActionFunctionArgs) {
       tags: ["dock-seal-config"],
       lineItems: [
         {
-          variantId: selectedVariantId,
+          title,
           quantity: quantity,
-          priceOverride: {
-            amount: String(calc.totalEstimatedPrice),
+          originalUnitPriceWithCurrency: {
+            amount: calc.totalEstimatedPrice,
             currencyCode: "USD",
           },
+          taxable: true,
           customAttributes: [
+            { key: "Control Number", value: controlNumber },
             { key: "A", value: payload.a },
             { key: "B", value: payload.b },
             { key: "C", value: payload.c },
@@ -1077,20 +1054,11 @@ export async function action({ request }: ActionFunctionArgs) {
             { key: "Q", value: payload.q },
             { key: "R", value: calc.footerMaterialDisplay },
             { key: "S", value: calc.wallTypeDisplay },
-            { key: "Control Number", value: controlNumber },
-            { key: "Shipping ZIP", value: shipping.zip },
-            { key: "Seal Subtotal", value: dollars(sealSubtotal) },
+            { key: "Quantity", value: String(quantity) },
+            { key: "Per Seal Price", value: String(calc.totalEstimatedPrice) },
+            { key: "Seal Subtotal", value: String(sealSubtotal) },
+            { key: "Shipping ZIP", value: payload.ship_zip },
           ],
-        },
-        {
-          title: "Freight",
-          quantity: 1,
-          originalUnitPriceWithCurrency: {
-            amount: String(shipping.amount),
-            currencyCode: "USD",
-          },
-          taxable: false,
-          requiresShipping: false,
         },
       ],
     },
@@ -1129,10 +1097,8 @@ export async function action({ request }: ActionFunctionArgs) {
         controlNumber,
         payload,
         calc,
-        shipping,
         quantity,
         sealSubtotal,
-        grandTotal,
         title,
         invoiceUrl,
         draftOrderName,
