@@ -1018,8 +1018,8 @@ export async function action({ request }: ActionFunctionArgs) {
 
   const selectedVariantId =
     calc.series === "1000"
-      ? "gid://shopify/ProductVariant/48194762735864"
-      : "gid://shopify/ProductVariant/48194762768632";
+      ? "gid://shopify/ProductVariant/47584195608834"
+      : "gid://shopify/ProductVariant/47584198787330";
 
   const noteLines = [
     "Dock seal generated from configurator",
@@ -1047,8 +1047,7 @@ export async function action({ request }: ActionFunctionArgs) {
 
   const variables = {
     input: {
-      note: noteLines.join("
-"),
+      note: noteLines.join("\n"),
       tags: ["dock-seal-config"],
       lineItems: [
         {
