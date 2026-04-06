@@ -930,7 +930,7 @@ function buildEmailText(args: {
   controlNumber: string;
   payload: Payload;
   calc: Exclude<CalcResult, { ok: false }>;
-  shipping: { state: string; quantity: number; zone: string; amount: number; zip: string };
+  shipping: Exclude<ShippingResult, { ok: false }>;
   quantity: number;
   sealSubtotal: number;
   grandTotal: number;
@@ -1075,40 +1075,40 @@ export async function action({ request }: ActionFunctionArgs) {
     return json({ ok: false, message: calc.message }, { status: 400 });
   }
 
+  const zipLookup = await lookupStateFromZip(payload.ship_zip);
+  if (!zipLookup.ok) {
+    return json({ ok: false, message: zipLookup.message }, { status: 400 });
+  }
 
-const zipLookup = await lookupStateFromZip(payload.ship_zip);
-if (!zipLookup.ok) {
-  return json({ ok: false, message: zipLookup.message }, { status: 400 });
-}
+  const shipping: Exclude<ShippingResult, { ok: false }> = {
+    ok: true,
+    state: zipLookup.state,
+    quantity,
+    zone: "Native Shopify Shipping",
+    amount: 0,
+    zip: zipLookup.zip,
+  };
 
-const shipping = {
-  ok: true as const,
-  state: zipLookup.state,
-  quantity,
-  zone: "Native Shopify Shipping",
-  amount: 0,
-  zip: zipLookup.zip,
-};
+  const sealSubtotal = calc.totalEstimatedPrice * quantity;
+  const grandTotal = sealSubtotal;
+  const controlNumber = generateControlNumber();
 
-const sealSubtotal = calc.totalEstimatedPrice * quantity;
-const grandTotal = sealSubtotal;
-const controlNumber = generateControlNumber();
-
-const mutation = `#graphql
-  mutation draftOrderCreate($input: DraftOrderInput!) {
-    draftOrderCreate(input: $input) {
-      draftOrder {
-        id
-        invoiceUrl
-        name
-      }
-      userErrors {
-        field
-        message
+  const mutation = `#graphql
+    mutation draftOrderCreate($input: DraftOrderInput!) {
+      draftOrderCreate(input: $input) {
+        draftOrder {
+          id
+          invoiceUrl
+          name
+        }
+        userErrors {
+          field
+          message
+        }
       }
     }
-  }
-`;
+  `;
+
 
 const title =
   calc.series === "1000"
@@ -1119,28 +1119,6 @@ const selectedVariantId =
   calc.series === "1000"
     ? "gid://shopify/ProductVariant/48194762735864"
     : "gid://shopify/ProductVariant/48194762768632";
-
-const noteLines = [
-  "Dock seal generated from configurator",
-  `Control Number: ${controlNumber}`,
-  `Series: ${calc.series}`,
-  `Quantity: ${quantity}`,
-  `Per Seal Price: ${dollars(calc.totalEstimatedPrice)}`,
-  `Seal Subtotal: ${dollars(sealSubtotal)}`,
-  `Shipping ZIP: ${shipping.zip}`,
-  `Shipping State: ${shipping.state}`,
-  `Shipping Mode: ${shipping.zone}`,
-  `Projection: ${calc.projection}"`,
-  `Top Projection: ${calc.topProjection}"`,
-  `Bevel: ${calc.selectedBevelCode}`,
-  `Overall Face Footprint: ${calc.overallFaceFootprint}"`,
-  `Backing Type: ${calc.backingType}`,
-  `Footer Material: ${calc.footerMaterialDisplay}`,
-  `Wall Type: ${calc.wallTypeDisplay}`,
-  calc.backingNote ? `Backing Note: ${calc.backingNote}` : "",
-  calc.truckTypeNote ? `Truck Type Note: ${calc.truckTypeNote}` : "",
-  `Options: ${calc.notes.join(", ")}`,
-].filter(Boolean);
 
 const itemDetails =
   `(A ${payload.a})` +
@@ -1165,6 +1143,28 @@ const itemDetails =
   `(Unit Price ${dollars(calc.totalEstimatedPrice)})` +
   `(Control # ${controlNumber})`;
 
+const noteLines = [
+  "Dock seal generated from configurator",
+  `Control Number: ${controlNumber}`,
+  `Series: ${calc.series}`,
+  `Quantity: ${quantity}`,
+  `Per Seal Price: ${dollars(calc.totalEstimatedPrice)}`,
+  `Seal Subtotal: ${dollars(sealSubtotal)}`,
+  `Shipping ZIP: ${shipping.zip}`,
+  `Shipping State: ${shipping.state}`,
+  `Shipping Mode: ${shipping.zone}`,
+  `Projection: ${calc.projection}"`,
+  `Top Projection: ${calc.topProjection}"`,
+  `Bevel: ${calc.selectedBevelCode}`,
+  `Overall Face Footprint: ${calc.overallFaceFootprint}"`,
+  `Backing Type: ${calc.backingType}`,
+  `Footer Material: ${calc.footerMaterialDisplay}`,
+  `Wall Type: ${calc.wallTypeDisplay}`,
+  calc.backingNote ? `Backing Note: ${calc.backingNote}` : "",
+  calc.truckTypeNote ? `Truck Type Note: ${calc.truckTypeNote}` : "",
+  `Options: ${calc.notes.join(", ")}`,
+].filter(Boolean);
+
 const variables = {
   input: {
     note: noteLines.join("\n"),
@@ -1185,112 +1185,113 @@ const variables = {
   },
 };
 
-const response = await admin.graphql(mutation, { variables });
-const responseJson = await response.json();
+  const response = await admin.graphql(mutation, { variables });
+  const responseJson = await response.json();
 
-const data = responseJson.data?.draftOrderCreate;
-const userErrors = data?.userErrors || [];
+  const data = responseJson.data?.draftOrderCreate;
+  const userErrors = data?.userErrors || [];
 
-if (userErrors.length) {
-  return json(
-    {
-      ok: false,
-      message: userErrors.map((e: { message: string }) => e.message).join(" | "),
-    },
-    { status: 400 },
-  );
-}
-
-const invoiceUrl = data.draftOrder.invoiceUrl as string;
-const draftOrderName = data.draftOrder.name as string;
-
-console.log("=== DOCK SEAL EMAIL BLOCK START ===");
-const resendApiKey = process.env.RESEND_API_KEY;
-const configEmailTo = process.env.CONFIG_EMAIL_TO;
-const configEmailFrom = process.env.CONFIG_EMAIL_FROM;
-
-let emailSent = false;
-let emailWarning = "";
-
-console.log("Resend env check:", {
-  hasApiKey: Boolean(resendApiKey),
-  hasTo: Boolean(configEmailTo),
-  hasFrom: Boolean(configEmailFrom),
-  controlNumber,
-});
-
-if (resendApiKey && configEmailTo && configEmailFrom) {
-  try {
-    const resend = new Resend(resendApiKey);
-
-    const apiKeyListResult = await resend.apiKeys.list();
-    console.log("Resend apiKeys.list response:", JSON.stringify(apiKeyListResult));
-
-    const html = buildEmailHtml({
-      controlNumber,
-      payload,
-      calc,
-      shipping,
-      quantity,
-      sealSubtotal,
-      grandTotal,
-      title,
-      invoiceUrl,
-      draftOrderName,
-    });
-
-    const text = buildEmailText({
-      controlNumber,
-      payload,
-      calc,
-      shipping,
-      quantity,
-      sealSubtotal,
-      grandTotal,
-      title,
-      invoiceUrl,
-      draftOrderName,
-    });
-
-    console.log("Attempting Resend send for control number:", controlNumber);
-
-    const emailResult = await resend.emails.send({
-      from: configEmailFrom,
-      to: [configEmailTo],
-      subject: `Dock Seal Submission ${controlNumber}`,
-      html,
-      text,
-    });
-
-    console.log("Raw Resend response:", JSON.stringify(emailResult));
-
-    if (emailResult.error) {
-      emailWarning = emailResult.error.message || "Submission email failed to send.";
-      console.error("Resend error:", emailResult.error);
-    } else {
-      emailSent = true;
-      console.log("Resend email sent successfully");
-    }
-  } catch (error) {
-    emailWarning =
-      error instanceof Error ? error.message : "Submission email failed to send.";
-    console.error("Resend exception:", error);
+  if (userErrors.length) {
+    return json(
+      {
+        ok: false,
+        message: userErrors.map((e: { message: string }) => e.message).join(" | "),
+      },
+      { status: 400 },
+    );
   }
-} else {
-  emailWarning =
-    "Submission email was skipped because RESEND_API_KEY, CONFIG_EMAIL_TO, or CONFIG_EMAIL_FROM is missing.";
-  console.error("Resend skipped:", {
+
+  const invoiceUrl = data.draftOrder.invoiceUrl as string;
+  const draftOrderName = data.draftOrder.name as string;
+
+
+  console.log("=== DOCK SEAL EMAIL BLOCK START ===");
+  const resendApiKey = process.env.RESEND_API_KEY;
+  const configEmailTo = process.env.CONFIG_EMAIL_TO;
+  const configEmailFrom = process.env.CONFIG_EMAIL_FROM;
+
+  let emailSent = false;
+  let emailWarning = "";
+
+  console.log("Resend env check:", {
     hasApiKey: Boolean(resendApiKey),
     hasTo: Boolean(configEmailTo),
     hasFrom: Boolean(configEmailFrom),
+    controlNumber,
   });
-}
 
-console.log("=== DOCK SEAL EMAIL BLOCK END ===", {
-  emailSent,
-  emailWarning,
-  controlNumber,
-});
+  if (resendApiKey && configEmailTo && configEmailFrom) {
+    try {
+      const resend = new Resend(resendApiKey);
+
+      const apiKeyListResult = await resend.apiKeys.list();
+      console.log("Resend apiKeys.list response:", JSON.stringify(apiKeyListResult));
+
+      const html = buildEmailHtml({
+        controlNumber,
+        payload,
+        calc,
+        shipping,
+        quantity,
+        sealSubtotal,
+        grandTotal,
+        title,
+        invoiceUrl,
+        draftOrderName,
+      });
+
+      const text = buildEmailText({
+        controlNumber,
+        payload,
+        calc,
+        shipping,
+        quantity,
+        sealSubtotal,
+        grandTotal,
+        title,
+        invoiceUrl,
+        draftOrderName,
+      });
+
+      console.log("Attempting Resend send for control number:", controlNumber);
+
+      const emailResult = await resend.emails.send({
+        from: configEmailFrom,
+        to: [configEmailTo],
+        subject: `Dock Seal Submission ${controlNumber}`,
+        html,
+        text,
+      });
+
+      console.log("Raw Resend response:", JSON.stringify(emailResult));
+
+      if (emailResult.error) {
+        emailWarning = emailResult.error.message || "Submission email failed to send.";
+        console.error("Resend error:", emailResult.error);
+      } else {
+        emailSent = true;
+        console.log("Resend email sent successfully");
+      }
+    } catch (error) {
+      emailWarning =
+        error instanceof Error ? error.message : "Submission email failed to send.";
+      console.error("Resend exception:", error);
+    }
+  } else {
+    emailWarning =
+      "Submission email was skipped because RESEND_API_KEY, CONFIG_EMAIL_TO, or CONFIG_EMAIL_FROM is missing.";
+    console.error("Resend skipped:", {
+      hasApiKey: Boolean(resendApiKey),
+      hasTo: Boolean(configEmailTo),
+      hasFrom: Boolean(configEmailFrom),
+    });
+  }
+
+  console.log("=== DOCK SEAL EMAIL BLOCK END ===", {
+    emailSent,
+    emailWarning,
+    controlNumber,
+  });
 
   return json({
     ok: true,
