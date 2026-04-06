@@ -1,10 +1,10 @@
 client_id = "167ac75cfad3d8a03bfd9ed283122cde"
 name = "new-dock-seal-app"
-application_url = "https://laser-characteristic-batteries-dictionaries.trycloudflare.com"
+application_url = "https://new-dock-seal-app.onrender.com"
 embedded = true
 
 [build]
-automatically_update_urls_on_dev = true
+automatically_update_urls_on_dev = false
 
 [webhooks]
 api_version = "2025-10"
@@ -22,9 +22,9 @@ scopes = "write_products,write_metaobjects,write_metaobject_definitions,write_dr
 
 [auth]
 redirect_urls = [
-  "https://laser-characteristic-batteries-dictionaries.trycloudflare.com/auth/callback",
-  "https://laser-characteristic-batteries-dictionaries.trycloudflare.com/auth/shopify/callback",
-  "https://laser-characteristic-batteries-dictionaries.trycloudflare.com/api/auth/callback"
+  "https://new-dock-seal-app.onrender.com/auth/callback",
+  "https://new-dock-seal-app.onrender.com/auth/shopify/callback",
+  "https://new-dock-seal-app.onrender.com/api/auth/callback"
 ]
 
 [product.metafields.app.demo_info]
@@ -52,6 +52,6 @@ name = "Description"
 type = "multi_line_text_field"
 
 [app_proxy]
-url = "https://laser-characteristic-batteries-dictionaries.trycloudflare.com/apps/dock-seal"
+url = "https://new-dock-seal-app.onrender.com/apps/dock-seal"
 subpath = "dock-seal"
 prefix = "apps"

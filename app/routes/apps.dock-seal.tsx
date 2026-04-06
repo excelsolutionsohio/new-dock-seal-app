@@ -1,6 +1,7 @@
 import { json } from "@remix-run/node";
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 import { authenticate } from "../shopify.server";
+import { Resend } from "resend";
 
 type Payload = {
   a: string;
@@ -24,6 +25,8 @@ type Payload = {
   r_other: string;
   s: string;
   s_other: string;
+  quantity: string;
+  ship_zip: string;
 };
 
 type CalcResult =
@@ -73,10 +76,27 @@ type CalcResult =
       backingNote: string;
     };
 
+type ShippingResult =
+  | { ok: false; message: string }
+  | {
+      ok: true;
+      state: string;
+      quantity: number;
+      zone: string;
+      amount: number;
+      zip: string;
+    };
+
 function parseNumber(value: string): number {
   if (!value) return 0;
   const num = parseFloat(value);
   return Number.isFinite(num) ? num : 0;
+}
+
+function parseWholeNumber(value: string, fallback = 1): number {
+  const num = parseInt(value, 10);
+  if (!Number.isFinite(num) || num < 1) return fallback;
+  return num;
 }
 
 function roundProjection(value: number): number {
@@ -84,6 +104,30 @@ function roundProjection(value: number): number {
   const decimal = value - whole;
   if (decimal <= 0.25) return whole;
   return whole + 1;
+}
+
+function dollars(value: number): string {
+  return `$${value.toFixed(2)}`;
+}
+
+function escapeHtml(value: unknown): string {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+function generateControlNumber(): string {
+  const now = new Date();
+  const yyyy = String(now.getUTCFullYear());
+  const mm = String(now.getUTCMonth() + 1).padStart(2, "0");
+  const dd = String(now.getUTCDate()).padStart(2, "0");
+  const hh = String(now.getUTCHours()).padStart(2, "0");
+  const mi = String(now.getUTCMinutes()).padStart(2, "0");
+  const ss = String(now.getUTCSeconds()).padStart(2, "0");
+  const rand = Math.floor(1000 + Math.random() * 9000);
+  return `DS-${yyyy}${mm}${dd}-${hh}${mi}${ss}-${rand}`;
 }
 
 const pricingTables = {
@@ -150,7 +194,6 @@ const pricingTables = {
 };
 
 function nearestProjectionBucket(proj: number): number {
-  if (proj <= 10) return 12;
   if (proj <= 12) return 12;
   if (proj <= 14) return 14;
   if (proj <= 16) return 16;
@@ -238,6 +281,103 @@ function getBlockoutPrice(
   return totalFeet * ratePerFoot;
 }
 
+const ZONE_1 = new Set(["OH", "MI", "IN", "IL", "WI", "KY", "WV", "PA"]);
+const ZONE_2 = new Set(["MN", "IA", "MO", "TN", "VA", "MD", "DE", "NJ", "NY"]);
+const ZONE_3 = new Set(["ND", "SD", "NE", "KS", "OK", "AR", "LA", "MT", "WY", "CO", "NM", "AZ", "NV", "UT", "ID", "TX"]);
+const ZONE_4 = new Set(["WA", "OR", "CA", "ME", "NH", "VT", "MA", "RI", "CT", "NC", "SC", "GA", "FL", "MS", "AL", "DC"]);
+
+function normalizeZip(value: string): string {
+  return value.replace(/[^\d]/g, "").slice(0, 5);
+}
+
+async function lookupStateFromZip(zipRaw: string): Promise<{ ok: true; state: string; zip: string } | { ok: false; message: string }> {
+  const zip = normalizeZip(zipRaw);
+
+  if (zip.length !== 5) {
+    return { ok: false, message: "Enter a valid 5-digit shipping ZIP." };
+  }
+
+  const response = await fetch(`https://api.zippopotam.us/us/${zip}`);
+  if (!response.ok) {
+    return { ok: false, message: "Could not look up that shipping ZIP." };
+  }
+
+  const data = (await response.json()) as {
+    places?: Array<{ "state abbreviation"?: string }>;
+  };
+
+  const state = data?.places?.[0]?.["state abbreviation"]?.toUpperCase() || "";
+
+  if (!state || state.length !== 2) {
+    return { ok: false, message: "Could not determine the shipping state from that ZIP." };
+  }
+
+  return { ok: true, state, zip };
+}
+
+function getShippingPriceFromState(state: string, quantity: number, zip: string): ShippingResult {
+  if (ZONE_1.has(state)) {
+    if (quantity >= 8) {
+      return { ok: true, state, quantity, zone: "Zone 1", amount: 1200, zip };
+    }
+    return {
+      ok: true,
+      state,
+      quantity,
+      zone: "Zone 1",
+      amount: 200 + Math.max(0, quantity - 1) * 150,
+      zip,
+    };
+  }
+
+  if (ZONE_2.has(state)) {
+    if (quantity >= 8) {
+      return { ok: true, state, quantity, zone: "Zone 2", amount: 1400, zip };
+    }
+    return {
+      ok: true,
+      state,
+      quantity,
+      zone: "Zone 2",
+      amount: 300 + Math.max(0, quantity - 1) * 150,
+      zip,
+    };
+  }
+
+  if (ZONE_3.has(state)) {
+    if (quantity >= 8) {
+      return { ok: true, state, quantity, zone: "Zone 3", amount: 1800, zip };
+    }
+    return {
+      ok: true,
+      state,
+      quantity,
+      zone: "Zone 3",
+      amount: 400 + Math.max(0, quantity - 1) * 100,
+      zip,
+    };
+  }
+
+  if (ZONE_4.has(state)) {
+    if (quantity >= 8) {
+      return { ok: true, state, quantity, zone: "Zone 4", amount: 2000, zip };
+    }
+    return {
+      ok: true,
+      state,
+      quantity,
+      zone: "Zone 4",
+      amount: 600 + Math.max(0, quantity - 1) * 80,
+      zip,
+    };
+  }
+
+  return {
+    ok: false,
+    message: `Shipping for ${state} is not in the current table yet.`,
+  };
+}
+
 function calculateSeal(payload: Payload): CalcResult {
   const A = parseNumber(payload.a);
   const B = parseNumber(payload.b);
@@ -247,7 +387,6 @@ function calculateSeal(payload: Payload): CalcResult {
   const F = parseNumber(payload.f);
   const G = parseNumber(payload.g);
   const H = parseNumber(payload.h);
-  const I = parseNumber(payload.i);
   const J = parseNumber(payload.j);
   const K = parseNumber(payload.k);
   const L = parseNumber(payload.l);
@@ -301,7 +440,7 @@ function calculateSeal(payload: Payload): CalcResult {
 
   const slopeTakeoffRaw = (Math.abs(slopePercent) / 100) * A;
 
-  let rawTopProjection: number;
+  let rawTopProjection = 0;
   if (P >= 0) rawTopProjection = rawProjection - slopeTakeoffRaw;
   else rawTopProjection = rawProjection + slopeTakeoffRaw;
   if (rawTopProjection < 0) rawTopProjection = 0;
@@ -319,7 +458,7 @@ function calculateSeal(payload: Payload): CalcResult {
     optionalBlockoutThickness = Math.max(1.5, projection - 18);
   }
 
-  let topWallToTruckDistanceNoBlockout: number;
+  let topWallToTruckDistanceNoBlockout = 0;
   if (P >= 0) {
     topWallToTruckDistanceNoBlockout = bottomWallToTruckDistance - slopeTakeoffRaw - sidingReduction;
   } else {
@@ -458,7 +597,7 @@ function calculateSeal(payload: Payload): CalcResult {
     if (openingTopFromDrive + headPadHeight < highTruckTarget1000) {
       return {
         ok: false,
-        message: "Dock Shelter Required — 1000 series cannot reach the required upper truck coverage within the 24\" head pad limit.",
+        message: 'Dock Shelter Required — 1000 series cannot reach the required upper truck coverage within the 24" head pad limit.',
       };
     }
 
@@ -507,14 +646,14 @@ function calculateSeal(payload: Payload): CalcResult {
     if (frontTopOfAssembly < 168) {
       return {
         ok: false,
-        message: "Dock Shelter Required — 1400 front top of assembly must be at least 14'0\" from driveway.",
+        message: 'Dock Shelter Required — 1400 front top of assembly must be at least 14\'0" from driveway.',
       };
     }
 
     if (backTopOfAssembly < 172) {
       return {
         ok: false,
-        message: "Dock Shelter Required — 1400 back top of assembly must be at least 14'4\" from driveway.",
+        message: 'Dock Shelter Required — 1400 back top of assembly must be at least 14\'4" from driveway.',
       };
     }
 
@@ -673,6 +812,118 @@ function calculateSeal(payload: Payload): CalcResult {
   };
 }
 
+function buildEmailHtml(args: {
+  controlNumber: string;
+  payload: Payload;
+  calc: Exclude<CalcResult, { ok: false }>;
+  shipping: Exclude<ShippingResult, { ok: false }>;
+  quantity: number;
+  sealSubtotal: number;
+  grandTotal: number;
+  title: string;
+  invoiceUrl: string;
+  draftOrderName: string;
+}) {
+  const { controlNumber, payload, calc, shipping, quantity, sealSubtotal, grandTotal, title, invoiceUrl, draftOrderName } = args;
+
+  const enteredRows = [
+    ["A", payload.a], ["B", payload.b], ["C", payload.c], ["D", payload.d],
+    ["E", payload.e], ["F", payload.f], ["G", payload.g], ["H", payload.h],
+    ["I", payload.i], ["J", payload.j], ["K", payload.k], ["L", payload.l],
+    ["M", payload.m], ["N", payload.n], ["O", payload.o], ["P", payload.p],
+    ["Q", payload.q], ["R", calc.footerMaterialDisplay], ["S", calc.wallTypeDisplay],
+    ["Quantity", String(quantity)], ["Shipping ZIP", shipping.zip], ["Shipping State", shipping.state],
+  ];
+
+  const calculatedRows = [
+    ["Control Number", controlNumber],
+    ["Draft Order", draftOrderName],
+    ["Item Title", title],
+    ["Series", calc.series],
+    ["Projection", `${calc.projection}"`],
+    ["Top Projection", `${calc.topProjection}"`],
+    ["Bevel", calc.selectedBevelCode],
+    ["Overall Face Footprint", `${calc.overallFaceFootprint}"`],
+    ["Wall Back Footprint", `${calc.wallBackFootprint}"`],
+    ["Offset Each Side", `${calc.offsetEachSide}"`],
+    ["Required Clearance Each Side", `${calc.requiredClearanceEachSide}"`],
+    ["Bottom Wall to Truck Distance", `${calc.bottomWallToTruckDistance}"`],
+    ["Top Wall to Truck Distance", `${calc.topWallToTruckDistance.toFixed(2)}"`],
+    ["Required Top Wall to Truck Min", `${calc.requiredTopWallToTruckMin}"`],
+    ["Siding Reduction", `${calc.sidingReduction}"`],
+    ["Blockout Thickness Used", `${calc.blockoutThicknessUsed}"`],
+    ["Backing Type", calc.backingType],
+    ["Side Pad Height", `${calc.sidePadHeight}"`],
+    ["Required Top Clearance", `${calc.requiredTopClearance}"`],
+    ["Calculated Top Clearance", `${calc.calculatedTopClearance}"`],
+    ["Opening Top From Drive", `${calc.openingTopFromDrive}"`],
+    ["Slope Percent", `${calc.slopePercent.toFixed(2)}%`],
+    ["Head Pad Height", `${calc.headPadHeight}"`],
+    ["Drop Curtain", `${calc.dropCurtain}"`],
+    ["Head Curtain Length", `${calc.headCurtainLength}"`],
+    ["Split Curtain", `${calc.splitCurtain}"`],
+    ["Front Top Of Assembly", calc.frontTopOfAssembly ? `${calc.frontTopOfAssembly}"` : "—"],
+    ["Back Top Of Assembly", calc.backTopOfAssembly ? `${calc.backTopOfAssembly}"` : "—"],
+    ["Base Sales Price", dollars(calc.baseSalesPrice)],
+    ["Bevel Adder", dollars(calc.bevelAdder)],
+    ["Pleat Adder", dollars(calc.pleatAdder)],
+    ["Head Pad Height Adder", dollars(calc.headPadHeightAdder)],
+    ["Drop Curtain Adder", dollars(calc.dropCurtainAdder)],
+    ["Head Cap Adder", dollars(calc.headCapAdder)],
+    ["Head Curtain Adder", dollars(calc.headCurtainAdder)],
+    ["Steel Back Adder", dollars(calc.steelBackAdder)],
+    ["Blockout Adder", dollars(calc.blockoutAdder)],
+    ["Per Seal Price", dollars(calc.totalEstimatedPrice)],
+    ["Seal Subtotal", dollars(sealSubtotal)],
+    ["Shipping Zone", shipping.zone],
+    ["Shipping Charge", dollars(shipping.amount)],
+    ["Grand Total", dollars(grandTotal)],
+  ];
+
+  const renderRows = (rows: Array<[string, string]>) =>
+    rows
+      .map(
+        ([label, value]) =>
+          `<tr><td style="padding:6px 10px;border:1px solid #ddd;font-weight:600;">${escapeHtml(label)}</td><td style="padding:6px 10px;border:1px solid #ddd;">${escapeHtml(value)}</td></tr>`,
+      )
+      .join("");
+
+  const notesHtml = calc.notes.map((note) => `<li>${escapeHtml(note)}</li>`).join("");
+
+  return `
+    <div style="font-family:Arial,sans-serif;color:#111;">
+      <h2 style="margin-bottom:8px;">Dock Seal Submission</h2>
+      <p><strong>Control Number:</strong> ${escapeHtml(controlNumber)}</p>
+      <p><strong>Draft Order:</strong> ${escapeHtml(draftOrderName)}</p>
+      <p><strong>Invoice URL:</strong> <a href="${escapeHtml(invoiceUrl)}">${escapeHtml(invoiceUrl)}</a></p>
+
+      <h3>Entered Inputs</h3>
+      <table style="border-collapse:collapse;width:100%;max-width:900px;">
+        ${renderRows(enteredRows)}
+      </table>
+
+      <h3 style="margin-top:24px;">Calculated Configuration</h3>
+      <table style="border-collapse:collapse;width:100%;max-width:900px;">
+        ${renderRows(calculatedRows)}
+      </table>
+
+      <h3 style="margin-top:24px;">Notes / Options</h3>
+      <ul>${notesHtml}</ul>
+
+      ${
+        calc.backingNote
+          ? `<p><strong>Backing Note:</strong> ${escapeHtml(calc.backingNote)}</p>`
+          : ""
+      }
+      ${
+        calc.truckTypeNote
+          ? `<p><strong>Truck Type Note:</strong> ${escapeHtml(calc.truckTypeNote)}</p>`
+          : ""
+      }
+    </div>
+  `;
+}
+
 export async function loader({ request }: LoaderFunctionArgs) {
   await authenticate.public.appProxy(request);
 
@@ -719,19 +970,30 @@ export async function action({ request }: ActionFunctionArgs) {
     r_other: String(formData.get("r_other") || ""),
     s: String(formData.get("s") || ""),
     s_other: String(formData.get("s_other") || ""),
+    quantity: String(formData.get("quantity") || "1"),
+    ship_zip: String(formData.get("ship_zip") || ""),
   };
 
-  const calc = calculateSeal(payload);
+  const quantity = parseWholeNumber(payload.quantity, 1);
 
+  const calc = calculateSeal(payload);
   if (!calc.ok) {
-    return json(
-      {
-        ok: false,
-        message: calc.message,
-      },
-      { status: 400 },
-    );
+    return json({ ok: false, message: calc.message }, { status: 400 });
   }
+
+  const zipLookup = await lookupStateFromZip(payload.ship_zip);
+  if (!zipLookup.ok) {
+    return json({ ok: false, message: zipLookup.message }, { status: 400 });
+  }
+
+  const shipping = getShippingPriceFromState(zipLookup.state, quantity, zipLookup.zip);
+  if (!shipping.ok) {
+    return json({ ok: false, message: shipping.message }, { status: 400 });
+  }
+
+  const sealSubtotal = calc.totalEstimatedPrice * quantity;
+  const grandTotal = sealSubtotal + shipping.amount;
+  const controlNumber = generateControlNumber();
 
   const mutation = `#graphql
     mutation draftOrderCreate($input: DraftOrderInput!) {
@@ -749,12 +1011,23 @@ export async function action({ request }: ActionFunctionArgs) {
     }
   `;
 
-  const title = `Dock Seal ${calc.series} ${calc.selectedBevelCode} ${calc.projection}"`;
+  const title =
+    calc.series === "1000"
+      ? "Dock Seal with Head Pad"
+      : "Dock Seal with Head Cap";
 
   const noteLines = [
     "Dock seal generated from configurator",
+    `Control Number: ${controlNumber}`,
     `Series: ${calc.series}`,
-    `Estimated Price: $${calc.totalEstimatedPrice}`,
+    `Quantity: ${quantity}`,
+    `Per Seal Price: ${dollars(calc.totalEstimatedPrice)}`,
+    `Seal Subtotal: ${dollars(sealSubtotal)}`,
+    `Shipping ZIP: ${shipping.zip}`,
+    `Shipping State: ${shipping.state}`,
+    `Shipping Zone: ${shipping.zone}`,
+    `Shipping Charge: ${dollars(shipping.amount)}`,
+    `Grand Total: ${dollars(grandTotal)}`,
     `Projection: ${calc.projection}"`,
     `Top Projection: ${calc.topProjection}"`,
     `Bevel: ${calc.selectedBevelCode}`,
@@ -776,11 +1049,12 @@ export async function action({ request }: ActionFunctionArgs) {
           title,
           quantity: 1,
           originalUnitPriceWithCurrency: {
-            amount: calc.totalEstimatedPrice,
+            amount: grandTotal,
             currencyCode: "USD",
           },
           taxable: false,
           customAttributes: [
+            { key: "Control Number", value: controlNumber },
             { key: "A", value: payload.a },
             { key: "B", value: payload.b },
             { key: "C", value: payload.c },
@@ -804,8 +1078,17 @@ export async function action({ request }: ActionFunctionArgs) {
             { key: "Projection", value: String(calc.projection) },
             { key: "Top Projection", value: String(calc.topProjection) },
             { key: "Bevel", value: calc.selectedBevelCode },
+            { key: "Overall Face Footprint", value: String(calc.overallFaceFootprint) },
+            { key: "Wall Back Footprint", value: String(calc.wallBackFootprint) },
             { key: "Backing Type", value: calc.backingType },
-            { key: "Estimated Price", value: String(calc.totalEstimatedPrice) },
+            { key: "Quantity", value: String(quantity) },
+            { key: "Per Seal Price", value: String(calc.totalEstimatedPrice) },
+            { key: "Seal Subtotal", value: String(sealSubtotal) },
+            { key: "Shipping ZIP", value: shipping.zip },
+            { key: "Shipping State", value: shipping.state },
+            { key: "Shipping Zone", value: shipping.zone },
+            { key: "Shipping Charge", value: String(shipping.amount) },
+            { key: "Grand Total", value: String(grandTotal) },
           ],
         },
       ],
@@ -828,18 +1111,62 @@ export async function action({ request }: ActionFunctionArgs) {
     );
   }
 
+  const invoiceUrl = data.draftOrder.invoiceUrl as string;
+  const draftOrderName = data.draftOrder.name as string;
+
+  const resendApiKey = process.env.RESEND_API_KEY;
+  const configEmailTo = process.env.CONFIG_EMAIL_TO;
+  const configEmailFrom = process.env.CONFIG_EMAIL_FROM;
+
+  let emailSent = false;
+  let emailWarning = "";
+
+  if (resendApiKey && configEmailTo && configEmailFrom) {
+    try {
+      const resend = new Resend(resendApiKey);
+      const html = buildEmailHtml({
+        controlNumber,
+        payload,
+        calc,
+        shipping,
+        quantity,
+        sealSubtotal,
+        grandTotal,
+        title,
+        invoiceUrl,
+        draftOrderName,
+      });
+
+      const emailResult = await resend.emails.send({
+        from: configEmailFrom,
+        to: [configEmailTo],
+        subject: `Dock Seal Submission ${controlNumber}`,
+        html,
+      });
+
+      if (emailResult.error) {
+        emailWarning = emailResult.error.message || "Submission email failed to send.";
+      } else {
+        emailSent = true;
+      }
+    } catch (error) {
+      emailWarning =
+        error instanceof Error ? error.message : "Submission email failed to send.";
+    }
+  } else {
+    emailWarning =
+      "Submission email was skipped because RESEND_API_KEY, CONFIG_EMAIL_TO, or CONFIG_EMAIL_FROM is missing.";
+  }
+
   return json({
     ok: true,
     message: "DRAFT ORDER CREATED",
     shop: session.shop,
     draftOrderId: data.draftOrder.id,
-    invoiceUrl: data.draftOrder.invoiceUrl,
-    name: data.draftOrder.name,
-    summary: {
-      series: calc.series,
-      projection: calc.projection,
-      bevel: calc.selectedBevelCode,
-      estimatedPrice: calc.totalEstimatedPrice,
-    },
+    invoiceUrl,
+    name: draftOrderName,
+    controlNumber,
+    emailSent,
+    emailWarning,
   });
 }
