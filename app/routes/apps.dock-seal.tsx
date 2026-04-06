@@ -930,7 +930,7 @@ function buildEmailText(args: {
   controlNumber: string;
   payload: Payload;
   calc: Exclude<CalcResult, { ok: false }>;
-  shipping: Exclude<ShippingResult, { ok: false }>;
+  shipping: { state: string; quantity: number; zone: string; amount: number; zip: string };
   quantity: number;
   sealSubtotal: number;
   grandTotal: number;
@@ -1008,8 +1008,7 @@ function buildEmailText(args: {
     `Blockout Adder: ${dollars(calc.blockoutAdder)}`,
     `Per Seal Price: ${dollars(calc.totalEstimatedPrice)}`,
     `Seal Subtotal: ${dollars(sealSubtotal)}`,
-    `Shipping Zone: ${shipping.zone}`,
-    `Shipping Charge: ${dollars(shipping.amount)}`,
+    `Shipping Mode: ${shipping.zone}`,
     `Grand Total: ${dollars(grandTotal)}`,
     ``,
     `Notes / Options`,
@@ -1081,13 +1080,17 @@ export async function action({ request }: ActionFunctionArgs) {
     return json({ ok: false, message: zipLookup.message }, { status: 400 });
   }
 
-  const shipping = getShippingPriceFromState(zipLookup.state, quantity, zipLookup.zip);
-  if (!shipping.ok) {
-    return json({ ok: false, message: shipping.message }, { status: 400 });
-  }
+  const shipping = {
+    ok: true as const,
+    state: zipLookup.state,
+    quantity,
+    zone: "Native Shopify Shipping",
+    amount: 0,
+    zip: zipLookup.zip,
+  };
 
   const sealSubtotal = calc.totalEstimatedPrice * quantity;
-  const grandTotal = sealSubtotal + shipping.amount;
+  const grandTotal = sealSubtotal;
   const controlNumber = generateControlNumber();
 
   const mutation = `#graphql
@@ -1140,10 +1143,32 @@ export async function action({ request }: ActionFunctionArgs) {
     `Options: ${calc.notes.join(", ")}`,
   ].filter(Boolean);
 
+  const itemDetails =
+    `(A ${payload.a})` +
+    `(B ${payload.b})` +
+    `(C ${payload.c})` +
+    `(D ${payload.d})` +
+    `(E ${payload.e})` +
+    `(F ${payload.f})` +
+    `(G ${payload.g})` +
+    `(H ${payload.h})` +
+    `(I ${payload.i})` +
+    `(J ${payload.j})` +
+    `(K ${payload.k})` +
+    `(L ${payload.l})` +
+    `(M ${payload.m})` +
+    `(N ${payload.n})` +
+    `(O ${payload.o})` +
+    `(P ${payload.p})` +
+    `(Q ${payload.q})` +
+    `(R ${calc.footerMaterialDisplay})` +
+    `(S ${calc.wallTypeDisplay})` +
+    `(Unit Price ${dollars(calc.totalEstimatedPrice)})` +
+    `(Control # ${controlNumber})`;
+
   const variables = {
     input: {
-      note: noteLines.join("
-"),
+      note: noteLines.join("\n"),
       tags: ["dock-seal-config"],
       lineItems: [
         {
@@ -1154,52 +1179,8 @@ export async function action({ request }: ActionFunctionArgs) {
             currencyCode: "USD",
           },
           customAttributes: [
-            { key: "Control Number", value: controlNumber },
-            { key: "A", value: payload.a },
-            { key: "B", value: payload.b },
-            { key: "C", value: payload.c },
-            { key: "D", value: payload.d },
-            { key: "E", value: payload.e },
-            { key: "F", value: payload.f },
-            { key: "G", value: payload.g },
-            { key: "H", value: payload.h },
-            { key: "I", value: payload.i },
-            { key: "J", value: payload.j },
-            { key: "K", value: payload.k },
-            { key: "L", value: payload.l },
-            { key: "M", value: payload.m },
-            { key: "N", value: payload.n },
-            { key: "O", value: payload.o },
-            { key: "P", value: payload.p },
-            { key: "Q", value: payload.q },
-            { key: "R", value: calc.footerMaterialDisplay },
-            { key: "S", value: calc.wallTypeDisplay },
-            { key: "Series", value: calc.series },
-            { key: "Projection", value: String(calc.projection) },
-            { key: "Top Projection", value: String(calc.topProjection) },
-            { key: "Bevel", value: calc.selectedBevelCode },
-            { key: "Overall Face Footprint", value: String(calc.overallFaceFootprint) },
-            { key: "Wall Back Footprint", value: String(calc.wallBackFootprint) },
-            { key: "Backing Type", value: calc.backingType },
-            { key: "Quantity", value: String(quantity) },
-            { key: "Per Seal Price", value: String(calc.totalEstimatedPrice) },
-            { key: "Seal Subtotal", value: String(sealSubtotal) },
-            { key: "Shipping ZIP", value: shipping.zip },
-            { key: "Shipping State", value: shipping.state },
-            { key: "Shipping Zone", value: shipping.zone },
-            { key: "Shipping Charge", value: String(shipping.amount) },
-            { key: "Grand Total", value: String(grandTotal) },
+            { key: "Details", value: itemDetails },
           ],
-        },
-        {
-          title: "Freight",
-          quantity: 1,
-          originalUnitPriceWithCurrency: {
-            amount: String(shipping.amount),
-            currencyCode: "USD",
-          },
-          taxable: false,
-          requiresShipping: false,
         },
       ],
     },
