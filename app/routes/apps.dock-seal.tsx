@@ -75,6 +75,56 @@ type CalcResult =
       backingNote: string;
     };
 
+
+type ThrottleBucket = {
+  count: number;
+  resetAt: number;
+};
+
+const throttleStore = new Map<string, ThrottleBucket>();
+
+function getClientIp(request: Request): string {
+  const forwardedFor = request.headers.get("x-forwarded-for") || "";
+  const realIp = request.headers.get("x-real-ip") || "";
+  const candidate = forwardedFor.split(",")[0].trim() || realIp.trim();
+  return candidate || "unknown";
+}
+
+function checkThrottle(key: string, limit: number, windowMs: number) {
+  const now = Date.now();
+  const existing = throttleStore.get(key);
+
+  if (!existing || now >= existing.resetAt) {
+    throttleStore.set(key, {
+      count: 1,
+      resetAt: now + windowMs,
+    });
+
+    return {
+      allowed: true,
+      retryAfterSeconds: Math.ceil(windowMs / 1000),
+      remaining: limit - 1,
+    };
+  }
+
+  if (existing.count >= limit) {
+    return {
+      allowed: false,
+      retryAfterSeconds: Math.max(1, Math.ceil((existing.resetAt - now) / 1000)),
+      remaining: 0,
+    };
+  }
+
+  existing.count += 1;
+  throttleStore.set(key, existing);
+
+  return {
+    allowed: true,
+    retryAfterSeconds: Math.max(1, Math.ceil((existing.resetAt - now) / 1000)),
+    remaining: Math.max(0, limit - existing.count),
+  };
+}
+
 function parseNumber(value: string): number {
   if (!value) return 0;
   const num = parseFloat(value);
@@ -860,6 +910,47 @@ export async function action({ request }: ActionFunctionArgs) {
   const isPreview =
     String(formData.get("preview") || "") === "1" ||
     new URL(request.url).searchParams.get("preview") === "1";
+
+  const clientIp = getClientIp(request);
+
+  if (isPreview) {
+    const throttle = checkThrottle(`preview:${clientIp}`, 30, 60 * 1000);
+
+    if (!throttle.allowed) {
+      return json(
+        {
+          ok: false,
+          preview: true,
+          unitPrice: 0,
+          perSealPrice: 0,
+          message: `Too many price checks. Please wait ${throttle.retryAfterSeconds} seconds and try again.`,
+        },
+        {
+          status: 429,
+          headers: {
+            "Retry-After": String(throttle.retryAfterSeconds),
+          },
+        },
+      );
+    }
+  } else {
+    const throttle = checkThrottle(`create:${clientIp}`, 5, 10 * 60 * 1000);
+
+    if (!throttle.allowed) {
+      return json(
+        {
+          ok: false,
+          message: `Too many checkout attempts. Please wait ${throttle.retryAfterSeconds} seconds and try again.`,
+        },
+        {
+          status: 429,
+          headers: {
+            "Retry-After": String(throttle.retryAfterSeconds),
+          },
+        },
+      );
+    }
+  }
 
   const quantity = parseWholeNumber(payload.quantity, 1);
 
