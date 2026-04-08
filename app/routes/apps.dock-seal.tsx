@@ -865,6 +865,16 @@ export async function action({ request }: ActionFunctionArgs) {
 
   const calc = calculateSeal(payload);
   if (!calc.ok) {
+    if (isPreview) {
+      return json({
+        ok: false,
+        preview: true,
+        unitPrice: 0,
+        perSealPrice: 0,
+        message: calc.message,
+      });
+    }
+
     return json({ ok: false, message: calc.message }, { status: 400 });
   }
 
