@@ -857,11 +857,25 @@ export async function action({ request }: ActionFunctionArgs) {
     ship_zip: String(formData.get("ship_zip") || ""),
   };
 
+  const isPreview =
+    String(formData.get("preview") || "") === "1" ||
+    new URL(request.url).searchParams.get("preview") === "1";
+
   const quantity = parseWholeNumber(payload.quantity, 1);
 
   const calc = calculateSeal(payload);
   if (!calc.ok) {
     return json({ ok: false, message: calc.message }, { status: 400 });
+  }
+
+  if (isPreview) {
+    return json({
+      ok: true,
+      preview: true,
+      unitPrice: calc.totalEstimatedPrice,
+      perSealPrice: calc.totalEstimatedPrice,
+      series: calc.series,
+    });
   }
 
   const sealSubtotal = calc.totalEstimatedPrice * quantity;
