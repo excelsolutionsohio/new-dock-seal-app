@@ -75,7 +75,6 @@ type CalcResult =
       backingNote: string;
     };
 
-
 type ThrottleBucket = {
   count: number;
   resetAt: number;
@@ -86,7 +85,7 @@ const throttleStore = new Map<string, ThrottleBucket>();
 function getClientIp(request: Request): string {
   const forwardedFor = request.headers.get("x-forwarded-for") || "";
   const realIp = request.headers.get("x-real-ip") || "";
-  const candidate = forwardedFor.split(",")[0].trim() || realIp.trim();
+  const candidate = realIp.trim() || forwardedFor.split(",")[0].trim();
   return candidate || "unknown";
 }
 
@@ -137,6 +136,10 @@ function parseWholeNumber(value: string, fallback = 1): number {
   return num;
 }
 
+function enforceMaxLength(value: string, max = 20) {
+  return value.length > max ? value.slice(0, max) : value;
+}
+
 function roundProjection(value: number): number {
   const whole = Math.floor(value);
   const decimal = value - whole;
@@ -168,8 +171,11 @@ function generateControlNumber(): string {
   return `DS-${yyyy}${mm}${dd}-${hh}${mi}${ss}-${rand}`;
 }
 
-
-function buildCheckoutItemDetails(payload: Payload, calc: Exclude<CalcResult, { ok: false }>, controlNumber: string): string {
+function buildCheckoutItemDetails(
+  payload: Payload,
+  calc: Exclude<CalcResult, { ok: false }>,
+  controlNumber: string,
+): string {
   return (
     `(A ${payload.a})` +
     `(B ${payload.b})` +
@@ -858,7 +864,14 @@ function calculateSeal(payload: Payload): CalcResult {
 }
 
 export async function loader({ request }: LoaderFunctionArgs) {
-  await authenticate.public.appProxy(request);
+  const { admin, session } = await authenticate.public.appProxy(request);
+
+  if (!admin || !session) {
+    return json(
+      { ok: false, message: "Unauthorized" },
+      { status: 401 },
+    );
+  }
 
   return json({
     ok: true,
@@ -882,30 +895,37 @@ export async function action({ request }: ActionFunctionArgs) {
   const formData = await request.formData();
 
   const payload: Payload = {
-    a: String(formData.get("a") || ""),
-    b: String(formData.get("b") || ""),
-    c: String(formData.get("c") || ""),
-    d: String(formData.get("d") || ""),
-    e: String(formData.get("e") || ""),
-    f: String(formData.get("f") || ""),
-    g: String(formData.get("g") || ""),
-    h: String(formData.get("h") || ""),
-    i: String(formData.get("i") || ""),
-    j: String(formData.get("j") || ""),
-    k: String(formData.get("k") || ""),
-    l: String(formData.get("l") || ""),
-    m: String(formData.get("m") || ""),
-    n: String(formData.get("n") || ""),
-    o: String(formData.get("o") || ""),
-    p: String(formData.get("p") || ""),
-    q: String(formData.get("q") || ""),
-    r: String(formData.get("r") || ""),
-    r_other: String(formData.get("r_other") || ""),
-    s: String(formData.get("s") || ""),
-    s_other: String(formData.get("s_other") || ""),
-    quantity: String(formData.get("quantity") || "1"),
-    ship_zip: String(formData.get("ship_zip") || ""),
+    a: enforceMaxLength(String(formData.get("a") || "")),
+    b: enforceMaxLength(String(formData.get("b") || "")),
+    c: enforceMaxLength(String(formData.get("c") || "")),
+    d: enforceMaxLength(String(formData.get("d") || "")),
+    e: enforceMaxLength(String(formData.get("e") || "")),
+    f: enforceMaxLength(String(formData.get("f") || "")),
+    g: enforceMaxLength(String(formData.get("g") || "")),
+    h: enforceMaxLength(String(formData.get("h") || "")),
+    i: enforceMaxLength(String(formData.get("i") || "")),
+    j: enforceMaxLength(String(formData.get("j") || "")),
+    k: enforceMaxLength(String(formData.get("k") || "")),
+    l: enforceMaxLength(String(formData.get("l") || "")),
+    m: enforceMaxLength(String(formData.get("m") || "")),
+    n: enforceMaxLength(String(formData.get("n") || "")),
+    o: enforceMaxLength(String(formData.get("o") || "")),
+    p: enforceMaxLength(String(formData.get("p") || "")),
+    q: enforceMaxLength(String(formData.get("q") || "")),
+    r: enforceMaxLength(String(formData.get("r") || "")),
+    r_other: enforceMaxLength(String(formData.get("r_other") || ""), 50),
+    s: enforceMaxLength(String(formData.get("s") || "")),
+    s_other: enforceMaxLength(String(formData.get("s_other") || ""), 50),
+    quantity: enforceMaxLength(String(formData.get("quantity") || "1"), 5),
+    ship_zip: enforceMaxLength(String(formData.get("ship_zip") || ""), 10),
   };
+
+  if (payload.ship_zip && !/^[0-9A-Za-z\- ]{3,10}$/.test(payload.ship_zip)) {
+    return json(
+      { ok: false, message: "Invalid ZIP code." },
+      { status: 400 },
+    );
+  }
 
   const isPreview =
     String(formData.get("preview") || "") === "1" ||
@@ -952,7 +972,7 @@ export async function action({ request }: ActionFunctionArgs) {
     }
   }
 
-  const quantity = parseWholeNumber(payload.quantity, 1);
+  const quantity = Math.min(parseWholeNumber(payload.quantity, 1), 50);
 
   const calc = calculateSeal(payload);
   if (!calc.ok) {
@@ -1030,15 +1050,32 @@ export async function action({ request }: ActionFunctionArgs) {
             amount: String(calc.totalEstimatedPrice),
             currencyCode: "USD",
           },
-          customAttributes: [
-            { key: "Details", value: itemDetails },
-          ],
+          customAttributes: [{ key: "Details", value: itemDetails }],
         },
       ],
     },
   };
 
-  const response = await admin.graphql(mutation, { variables });
+  let response: Response;
+
+  try {
+    response = (await Promise.race([
+      admin.graphql(mutation, { variables }),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error("Shopify timeout")), 8000),
+      ),
+    ])) as Response;
+  } catch (error) {
+    return json(
+      {
+        ok: false,
+        message:
+          error instanceof Error ? error.message : "Unable to create draft order.",
+      },
+      { status: 502 },
+    );
+  }
+
   const responseJson = await response.json();
 
   const data = responseJson.data?.draftOrderCreate;
