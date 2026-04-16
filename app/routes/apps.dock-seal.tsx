@@ -570,7 +570,7 @@ function calculateSeal(payload: Payload): CalcResult {
 
   const ID = 94;
   let series = "1000";
-  if (A >= 120 || topProjection > 16) {
+  if (A >= 120 || topProjection > 17) {
     series = "1400";
   }
 
